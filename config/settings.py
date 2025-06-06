@@ -27,5 +27,9 @@ DEFAULT_SHADOWS = 100
 
 # Outras configurações
 DEBUG_PLOTS_ENABLED = False # Habilita plots de depuração em janelas separadas
-PREVIEW_THUMBNAIL_SIZE = (800, 600) # Tamanho máximo para a imagem de preview na GUI
+PREVIEW_THUMBNAIL_SIZE = (600, 400) # Tamanho máximo para a imagem de preview na GUI
 VIDEO_FPS = 10.0 # Frames por segundo do vídeo de saída
+
+THRESHOLD_VALUE_DIFFERENCE = 25 # Threshold para a diferença de imagem
+KERNEL_BLUR_SIZE = (5, 5) # Tamanho do kernel para o desfoque Gaussiano
+KERNEL_MORPH_SIZE = 5 # Tamanho do kernel para operações morfológicas (OPEN/CLOSE)

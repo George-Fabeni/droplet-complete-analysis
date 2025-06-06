@@ -181,8 +181,8 @@ class DropletAnalyzerApp(tk.Tk):
 
         cv2.imshow("Selecione a Área de Corte (Arraste e Solte)", self.temp_crop_display_scaled)
         cv2.setMouseCallback("Selecione a Área de Corte (Arraste e Solte)", self._mouse_callback_crop)
-        messagebox.showinfo("Instruções de Corte", "Clique e arraste para selecionar a área de corte.\n"
-                                                 "Pressione 'Enter' para confirmar ou 'Esc' para cancelar.")
+        #messagebox.showinfo("Instruções de Corte", "Clique e arraste para selecionar a área de corte.\n"
+        #                                         "Pressione 'Enter' para confirmar ou 'Esc' para cancelar.")
         
         while True:
             key = cv2.waitKey(1) & 0xFF
@@ -206,40 +206,47 @@ class DropletAnalyzerApp(tk.Tk):
         if not self.cropping_active:
             return
 
-        # Create a fresh copy of the scaled image for drawing each time
-        # This is crucial for smooth drawing, as we redraw the whole image + rectangle
+        # Always start with a fresh copy of the scaled image for drawing
         display_img_for_cropping = self.temp_crop_display_scaled.copy()
 
-        # Convert mouse coords (scaled) to original image coords for storage
-        h_orig, w_orig = self.current_image_full_res_cv2.shape[:2]
-        
-        # Ensure 'x' and 'y' are within the bounds of the *scaled display image*
-        x = np.clip(x, 0, display_img_for_cropping.shape[1] -1)
-        y = np.clip(y, 0, display_img_for_cropping.shape[0] -1)
+        # Ensure 'x' and 'y' (mouse coordinates on the scaled display) are within bounds
+        # These 'x' and 'y' are directly used for drawing on 'display_img_for_cropping'
+        x = np.clip(x, 0, display_img_for_cropping.shape[1] - 1)
+        y = np.clip(y, 0, display_img_for_cropping.shape[0] - 1)
 
+        # Convert mouse coords (scaled) back to original image coords for storage in self.crop_coords
+        h_orig, w_orig = self.current_image_full_res_cv2.shape[:2]
         x_orig = int(x / self.scale_factor_crop_display)
         y_orig = int(y / self.scale_factor_crop_display)
         
-        # Ensure original coordinates are within image bounds
-        x_orig = np.clip(x_orig, 0, w_orig - 1)
-        y_orig = np.clip(y_orig, 0, h_orig - 1)
-
+        # Ensure original coordinates are within original image bounds
+        x_orig = np.clip(x_orig, 0, w_orig) # Use w_orig, h_orig directly for clipping max
+        y_orig = np.clip(y_orig, 0, h_orig) # This is important to avoid off-by-one errors with image slicing
 
         if event == cv2.EVENT_LBUTTONDOWN:
             self.start_x, self.start_y = x_orig, y_orig
             # Initialize crop_coords with start point, end point will be updated on drag
             self.crop_coords = [self.start_x, self.start_y, x_orig, y_orig] 
+            # Draw initial point to show user where click occurred
+            cv2.circle(display_img_for_cropping, (x, y), 5, (0, 0, 255), -1) # Red dot for start
+            cv2.imshow("Selecione a Área de Corte (Arraste e Solte)", display_img_for_cropping)
+
         elif event == cv2.EVENT_MOUSEMOVE and flags == cv2.EVENT_FLAG_LBUTTON:
             # Update the end point of crop_coords in original image scale
             self.crop_coords[2], self.crop_coords[3] = x_orig, y_orig
             
             # Draw on the scaled display using scaled start/end points
-            # Use 'x' and 'y' directly for drawing the current mouse position on the *scaled* image
+            # Get scaled start coordinates for drawing
+            scaled_start_x = int(self.start_x * self.scale_factor_crop_display)
+            scaled_start_y = int(self.start_y * self.scale_factor_crop_display)
+
+            # Draw the rectangle using the scaled start point and current mouse position (x,y)
             cv2.rectangle(display_img_for_cropping, 
-                          (int(self.start_x * self.scale_factor_crop_display), int(self.start_y * self.scale_factor_crop_display)), 
+                          (scaled_start_x, scaled_start_y), 
                           (x, y), # Use current scaled mouse coords for the rectangle end point
                           (0, 255, 0), 2)
             cv2.imshow("Selecione a Área de Corte (Arraste e Solte)", display_img_for_cropping)
+
         elif event == cv2.EVENT_LBUTTONUP:
             # Final end point in original image scale
             self.crop_coords[2], self.crop_coords[3] = x_orig, y_orig
@@ -252,9 +259,15 @@ class DropletAnalyzerApp(tk.Tk):
             self.crop_coords_var.set(','.join(map(str, self.crop_coords)))
             
             # Draw final rectangle on the scaled display for visual confirmation
+            # Use the finalized crop_coords (scaled) for drawing
+            scaled_x1 = int(self.crop_coords[0] * self.scale_factor_crop_display)
+            scaled_y1 = int(self.crop_coords[1] * self.scale_factor_crop_display)
+            scaled_x2 = int(self.crop_coords[2] * self.scale_factor_crop_display)
+            scaled_y2 = int(self.crop_coords[3] * self.scale_factor_crop_display)
+
             cv2.rectangle(display_img_for_cropping, 
-                          (int(self.crop_coords[0] * self.scale_factor_crop_display), int(self.crop_coords[1] * self.scale_factor_crop_display)), 
-                          (int(self.crop_coords[2] * self.scale_factor_crop_display), int(self.crop_coords[3] * self.scale_factor_crop_display)), 
+                          (scaled_x1, scaled_y1), 
+                          (scaled_x2, scaled_y2), 
                           (0, 255, 0), 2)
             cv2.imshow("Selecione a Área de Corte (Arraste e Solte)", display_img_for_cropping)
 
@@ -267,35 +280,6 @@ class DropletAnalyzerApp(tk.Tk):
         if self.base_image_path is None:
             messagebox.showwarning("Aviso", "Selecione uma imagem de base primeiro.")
             return
-        
-        x1, y1, x2, y2 = self.crop_coords
-        # Recalculate full image bounds if no valid crop is set
-        if self.current_image_full_res_cv2 is not None and (x1 == x2 or y1 == y2):
-            h_full, w_full = self.current_image_full_res_cv2.shape[:2]
-            current_w = w_full
-            current_h = h_full
-        else: # If no image is loaded, use a fallback
-            current_w = PREVIEW_THUMBNAIL_SIZE[0]
-            current_h = PREVIEW_THUMBNAIL_SIZE[1]
-
-        # Check if the crop coordinates are valid for the *full resolution* image
-        if x1 == x2 or y1 == y2 or \
-           x1 < 0 or y1 < 0 or \
-           x2 > current_w or y2 > current_h: # Use current_w/h which is either full or fallback
-            res = messagebox.askyesno("Confirmar Corte", 
-                                      "As coordenadas de corte parecem inválidas (área zero ou fora dos limites). "
-                                      "Deseja continuar usando a imagem completa para processamento? "
-                                      "Isso pode levar a resultados inesperados se o foco da gota não estiver centralizado.")
-            if not res:
-                return
-            # If user confirms to continue with invalid crop, set it to the whole image
-            if self.current_image_full_res_cv2 is not None:
-                h, w = self.current_image_full_res_cv2.shape[:2]
-                self.crop_coords = [0, 0, w, h]
-                self.crop_coords_var.set(','.join(map(str, self.crop_coords)))
-            else:
-                 self.crop_coords = [0,0,800,600] # Fallback
-                 self.crop_coords_var.set(','.join(map(str, self.crop_coords)))
 
 
         output_video_path = os.path.join(DEFAULT_OUTPUT_FOLDER, "processed_droplet_video.mp4")

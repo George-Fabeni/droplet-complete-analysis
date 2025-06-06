@@ -2,13 +2,14 @@
 import cv2
 import os
 import pandas as pd
-from datetime import datetime
-import numpy as np # Adicionar import do numpy
+from datetime import datetime # Certifique-se de que esta linha está presente
+import numpy as np
 
 from processing.utils import load_image_cv2, rotate_image
-from processing.image_processing import process_frame_for_droplets # Certifique-se de que esta importação existe
-from processing.image_adjustments import apply_adjustments_cv2 # Certifique-se de que esta importação existe
-from config.settings import VIDEO_FPS, PX_PER_MM, MM3_PER_UL # Certifique-se de que estas importações existem
+# IMPORTAR SUAS FUNÇÕES ESPECÍFICAS AQUI
+from processing.image_processing import segment_drop, calculate_measurements # <--- ATUALIZADO AQUI
+from processing.image_adjustments import apply_adjustments_cv2
+from config.settings import VIDEO_FPS, PX_PER_MM, MM3_PER_UL, THRESHOLD_VALUE_DIFFERENCE, KERNEL_BLUR_SIZE, KERNEL_MORPH_SIZE # <--- Adicionar parâmetros de processamento
 
 def process_images_and_generate_video(
     image_paths, 
@@ -23,39 +24,40 @@ def process_images_and_generate_video(
         print("Nenhuma imagem para processar.")
         return
 
-    # Load and process base image once
-    base_image_full = load_image_cv2(base_image_path)
-    base_image_rotated = rotate_image(base_image_full, rotation_angle)
+    # Load and process base image once (full resolution, rotated)
+    base_image_full_res = load_image_cv2(base_image_path)
+    base_image_rotated = rotate_image(base_image_full_res, rotation_angle)
 
-    # Apply crop to base image
-    x1, y1, x2, y2 = crop_coords
+    # Base image is used for difference, but the video dimensions will come from the *first* cropped image.
+    # We will pass the crop_coords directly to segment_drop for each image.
+
+    measurements_data = [] # Lista para armazenar os dados de medição
+
+    # Determine video dimensions from the *first* image's crop, or fallback to default
+    # This loop is just to get the first valid frame's dimensions for video writer initialization
+    first_frame_dims = None
+    for i, img_path in enumerate(image_paths):
+        current_image_full_res = load_image_cv2(img_path)
+        current_image_rotated = rotate_image(current_image_full_res, rotation_angle)
+        
+        # Call segment_drop to get the cropped_current_color (the actual image content after crop)
+        # We don't need mask_full or prominence_contour here, just the dimensions of the cropped image.
+        _, _, temp_cropped_color = segment_drop(
+            current_image_rotated, base_image_rotated, crop_coords,
+            THRESHOLD_VALUE_DIFFERENCE, KERNEL_BLUR_SIZE, KERNEL_MORPH_SIZE, debug_plots=False # No debug plots for initial dim
+        )
+        
+        if temp_cropped_color is not None and temp_cropped_color.shape[0] > 0 and temp_cropped_color.shape[1] > 0:
+            first_frame_dims = temp_cropped_color.shape[:2] # height, width
+            break # Got dimensions, exit loop
+        elif i == len(image_paths) - 1:
+            print("Nenhuma imagem válida para determinar as dimensões do vídeo. Usando fallback.")
+            first_frame_dims = (720, 1280) # Fallback if no valid image/crop found
+
+    height, width = first_frame_dims
     
-    # Validate crop_coords against the base_image_rotated dimensions
-    h_base, w_base = base_image_rotated.shape[:2]
-    # Ensure crop coordinates are within base image bounds
-    x1 = max(0, x1)
-    y1 = max(0, y1)
-    x2 = min(w_base, x2)
-    y2 = min(h_base, y2)
-
-    # Adjust if crop area is invalid after clamping
-    if x2 <= x1 or y2 <= y1:
-        # Fallback to full image if crop is invalid or zero area
-        print(f"Atenção: Coordenadas de corte inválidas após clamping: {crop_coords}. Usando a imagem base completa para o corte.")
-        x1, y1, x2, y2 = 0, 0, w_base, h_base
-        crop_coords = [x1, y1, x2, y2] # Update crop_coords for subsequent images
-
-    base_image_cropped = base_image_rotated[y1:y2, x1:x2]
-    base_image_processed = apply_adjustments_cv2(base_image_cropped, brightness, exposure, contrast, highlights, shadows)
-
-
-    # Determine video dimensions from the *cropped* base image
-    # All frames will be resized to this size for consistency
-    height, width = base_image_processed.shape[:2]
     fourcc = cv2.VideoWriter_fourcc(*'mp4v') # Codec for .mp4
     out = cv2.VideoWriter(output_video_path, fourcc, VIDEO_FPS, (width, height))
-
-    measurements_data = []
 
     print(f"Iniciando processamento de {len(image_paths)} imagens e geração de vídeo...")
 
@@ -63,60 +65,100 @@ def process_images_and_generate_video(
         try:
             print(f"Processando imagem {i+1}/{len(image_paths)}: {os.path.basename(img_path)}")
 
-            current_image_full = load_image_cv2(img_path)
-            current_image_rotated = rotate_image(current_image_full, rotation_angle)
+            current_image_full_res = load_image_cv2(img_path)
+            current_image_rotated = rotate_image(current_image_full_res, rotation_angle)
 
-            # --- APLICAR CORTE DE FORMA ROBUSTA AQUI ---
-            # Use as coordenadas de corte que foram (possivelmente) ajustadas para a imagem base
-            x1, y1, x2, y2 = crop_coords 
+            # --- SEGMENTAR A GOTA USANDO SUA LÓGICA ---
+            mask_full, prominence_contour, cropped_current_color = segment_drop(
+                current_image_rotated, base_image_rotated, crop_coords,
+                THRESHOLD_VALUE_DIFFERENCE, KERNEL_BLUR_SIZE, KERNEL_MORPH_SIZE, debug_plots=False
+            )
 
-            # Validar e ajustar as coordenadas de corte para a imagem atual
-            h_current, w_current = current_image_rotated.shape[:2]
-            
-            # Clamp crop_coords to current image dimensions
-            safe_x1 = max(0, x1)
-            safe_y1 = max(0, y1)
-            safe_x2 = min(w_current, x2)
-            safe_y2 = min(h_current, y2)
+            if cropped_current_color is None or cropped_current_color.shape[0] == 0 or cropped_current_color.shape[1] == 0:
+                print(f"Atenção: Imagem {os.path.basename(img_path)} resultou em um frame cropped vazio. Pulando processamento.")
+                continue # Skip this frame if it's empty after segment_drop
 
-            # If the calculated safe crop area is invalid, use the full current image
-            if safe_x2 <= safe_x1 or safe_y2 <= safe_y1:
-                print(f"Atenção: Área de corte inválida para {os.path.basename(img_path)}. Usando a imagem completa.")
-                current_image_cropped = current_image_rotated.copy()
-            else:
-                current_image_cropped = current_image_rotated[safe_y1:safe_y2, safe_x1:safe_x2].copy()
-            # --- FIM DO CORTE ROBUSTO ---
-
-
-            # Aplicar ajustes de imagem
+            # Aplicar ajustes de imagem (Brilho, Contraste, etc.)
+            # Estes ajustes são aplicados no frame *já cortado*
             current_image_adjusted = apply_adjustments_cv2(
-                current_image_cropped, brightness, exposure, contrast, highlights, shadows
+                cropped_current_color, brightness, exposure, contrast, highlights, shadows
             )
 
-            # Redimensionar para o tamanho do vídeo (definido pela imagem base processada)
+            # Redimensionar para o tamanho do vídeo (definido no início)
             # Isso é crucial para que todos os frames tenham o mesmo tamanho
-            current_image_final = cv2.resize(current_image_adjusted, (width, height))
+            processed_frame_for_video = cv2.resize(current_image_adjusted, (width, height))
 
-            # Processar o frame
-            result_frame, frame_data = process_frame_for_droplets(
-                current_image_final, base_image_processed, i + 1, PX_PER_MM, MM3_PER_UL
-            )
+
+            # --- CALCULAR MEDIÇÕES USANDO SUA LÓGICA ---
+            measurements = calculate_measurements(mask_full, prominence_contour, PX_PER_MM, MM3_PER_UL)
             
-            out.write(result_frame)
-            if frame_data: # Ensure frame_data is not empty
-                measurements_data.append(frame_data)
+            # Adicionar dados específicos do frame ao dicionário de medições
+            measurements['frame_number'] = i + 1
+            measurements['image_name'] = os.path.basename(img_path)
+            measurements['timestamp'] = datetime.now().isoformat() # Ou um timestamp mais preciso se disponível
+
+            measurements_data.append(measurements)
+
+            # --- DESENHAR INFORMAÇÕES NO VÍDEO (Se desejar) ---
+            # Você pode querer desenhar o contorno, o centroide, e as medições no `processed_frame_for_video`
+            # antes de escrevê-lo no vídeo.
+            if prominence_contour is not None and prominence_contour.shape[0] > 0:
+                # Desenhar contorno. Offset prominence_contour by -x1, -y1 if it's relative to global image.
+                # No nosso caso, mask_full e prominence_contour já são do tamanho do cropped_current_color,
+                # então as coordenadas do contorno já estão corretas para processed_frame_for_video.
+                
+                # Se as medidas cX, cY foram calculadas no cropped_current_color, 
+                # elas se referem a esse frame. Podemos desenhar nele.
+                # Redimensionar o contorno se processed_frame_for_video for diferente de cropped_current_color
+                
+                # Para desenhar o contorno no frame redimensionado para vídeo:
+                # O contorno está na escala do cropped_current_color.
+                # processed_frame_for_video tem dimensões (width, height).
+                # Se width != cropped_current_color.shape[1] ou height != cropped_current_color.shape[0]:
+                scale_w = width / cropped_current_color.shape[1]
+                scale_h = height / cropped_current_color.shape[0]
+                
+                scaled_contour = prominence_contour.copy()
+                scaled_contour[:, 0, 0] = (scaled_contour[:, 0, 0] * scale_w).astype(int)
+                scaled_contour[:, 0, 1] = (scaled_contour[:, 0, 1] * scale_h).astype(int)
+                
+                cv2.drawContours(processed_frame_for_video, [scaled_contour], -1, (0, 255, 0), 2) # Verde
+                
+                # Desenhar centroide
+                # Se o centroide (cX, cY) foi calculado em relação ao cropped_current_color, 
+                # precisamos escalá-lo também
+                scaled_cX = int(measurements['cX'] * scale_w)
+                scaled_cY = int(measurements['cY'] * scale_h)
+                cv2.circle(processed_frame_for_video, (scaled_cX, scaled_cY), 5, (0, 0, 255), -1) # Vermelho
+                
+                # Desenhar texto com medições
+                info_text = (f"Frame: {i+1} | Area: {measurements['area_pixels']:.0f}px | "
+                             f"Vol: {measurements['volume_uL']:.3f}uL | "
+                             f"Diam_B: {measurements['base_length_mm']:.2f}mm | "
+                             f"Height: {measurements['height_mm']:.2f}mm")
+                cv2.putText(processed_frame_for_video, info_text, (10, 30), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2, cv2.LINE_AA) # Amarelo
+
+
+            out.write(processed_frame_for_video)
 
         except Exception as e:
             print(f"Erro ao processar {os.path.basename(img_path)}: {e}")
-            continue # Continue to next image even if one fails
+            # Em caso de erro, adicione um frame vazio para não quebrar o vídeo
+            if first_frame_dims:
+                blank_frame = np.zeros((height, width, 3), dtype=np.uint8)
+                out.write(blank_frame)
+            continue # Continue para a próxima imagem
 
     out.release()
 
-    if measurements_data:
-        df = pd.DataFrame(measurements_data)
-        df.to_csv(output_csv_path, index=False)
-        print(f"Dados de medição salvos em: {output_csv_path}")
-    else:
-        print("Nenhum dado de medição foi coletado.")
+    # --- REMOVER GERAÇÃO DE CSV SE NÃO FOR ÚTIL ---
+    # if measurements_data:
+    #     df = pd.DataFrame(measurements_data)
+    #     df.to_csv(output_csv_path, index=False)
+    #     print(f"Dados de medição salvos em: {output_csv_path}")
+    # else:
+    #     print("Nenhum dado de medição foi coletado.")
+    # --- FIM DA REMOÇÃO ---
 
     print(f"Vídeo salvo em: {output_video_path}")

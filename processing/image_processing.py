@@ -1,110 +1,251 @@
 # processing/image_processing.py
 import cv2
 import numpy as np
-from datetime import datetime
+import pandas as pd # Se você precisar de pandas aqui para algo, caso contrário remova
+from datetime import datetime # Para o timestamp
 
-def process_frame_for_droplets(current_frame, base_frame, frame_number, px_per_mm, mm3_per_ul):
+# Certifique-se de que PX_PER_MM e MM3_PER_UL estejam disponíveis aqui,
+# seja importando-os ou passando-os como argumentos.
+# Por simplicidade, vou assumir que são passados ou importados de settings.
+from config.settings import PX_PER_MM, MM3_PER_UL
+
+
+def calculate_image_difference(base_image_cv2, current_image_cv2, crop_coords, debug_plots=False):
     """
-    Processa um único frame para detectar e medir gotas.
+    Calcula a diferença entre a imagem atual e a imagem base, aplicando o corte.
 
     Args:
-        current_frame (np.array): A imagem do frame atual (já ajustada e cortada).
-        base_frame (np.array): A imagem de fundo (já ajustada e cortada) para subtração.
-        frame_number (int): O número do frame (para registro).
-        px_per_mm (float): Pixels por milímetro para conversão de escala.
+        base_image_cv2 (np.array): A imagem base (já rotacionada).
+        current_image_cv2 (np.array): A imagem atual (já rotacionada).
+        crop_coords (list): [x1, y1, x2, y2] coordenadas de corte.
+        debug_plots (bool): Se True, mostra plots para depuração.
+
+    Returns:
+        tuple: (diferenca_raw, cropped_original_color)
+               Retorna (None, None) se o corte for inválido para as imagens.
+    """
+    x1, y1, x2, y2 = crop_coords
+
+    # Valide e clamp as coordenadas de corte para ambas as imagens
+    # Assumimos que base_image_cv2 e current_image_cv2 já foram rotacionadas.
+    # Precisamos pegar as dimensões delas INDIVIDUALMENTE para garantir que o corte seja seguro.
+
+    h_base, w_base = base_image_cv2.shape[:2]
+    h_current, w_current = current_image_cv2.shape[:2]
+
+    # Use as coordenadas de corte calculadas pelo usuário.
+    # No entanto, clamp-as aos limites da imagem atual.
+    # O crop_coords já foi validado e ajustado no main_window para a imagem que foi exibida.
+    # Aqui, garantimos que ele não estoure os limites da imagem que está sendo processada.
+    safe_x1 = max(0, x1)
+    safe_y1 = max(0, y1)
+    safe_x2 = min(w_current, x2) # Min com a largura da imagem atual
+    safe_y2 = min(h_current, y2) # Min com a altura da imagem atual
+
+    # Se a área de corte resultante for inválida após o clamping, retorne None
+    if safe_x2 <= safe_x1 or safe_y2 <= safe_y1:
+        print(f"Warning: Calculated crop area [{safe_x1},{safe_y1},{safe_x2},{safe_y2}] is invalid for current image dimensions ({w_current}x{h_current}). Returning dummy mask.")
+        return None, None
+
+    # Aplica o mesmo corte tanto para a imagem base quanto para a imagem atual
+    cropped_base = base_image_cv2[safe_y1:safe_y2, safe_x1:safe_x2]
+    cropped_current = current_image_cv2[safe_y1:safe_y2, safe_x1:safe_x2]
+
+    cropped_original_color = current_image_cv2[safe_y1:safe_y2, safe_x1:safe_x2].copy() # Cópia para o output
+
+    # Converte para escala de cinza para calcular a diferença
+    gray_base = cv2.cvtColor(cropped_base, cv2.COLOR_BGR2GRAY)
+    gray_current = cv2.cvtColor(cropped_current, cv2.COLOR_BGR2GRAY)
+
+    # Calcula a diferença absoluta
+    diferenca_raw = cv2.absdiff(gray_current, gray_base)
+
+    if debug_plots:
+        cv2.imshow("Difference Raw (Cropped)", diferenca_raw)
+        # cv2.waitKey(1) # Small wait to allow window to render
+
+    return diferenca_raw, cropped_original_color
+
+
+def process_difference_image(diferenca_raw, threshold_value_difference, kernel_blur_size, kernel_morph_size, debug_plots=False):
+    """
+    Processa a imagem de diferença para obter a máscara da gota e seu contorno de proeminência.
+
+    Args:
+        diferenca_raw (np.array): Imagem de diferença em escala de cinza.
+        threshold_value_difference (int): Valor de limiar para binarização.
+        kernel_blur_size (tuple): Tamanho do kernel para desfoque Gaussiano (e.g., (5,5)).
+        kernel_morph_size (int): Tamanho do kernel para operações morfológicas (e.g., 3).
+        debug_plots (bool): Se True, mostra plots para depuração.
+
+    Returns:
+        tuple: (mask_full, prominence_contour)
+               Retorna (None, None) se nenhum contorno proeminente for encontrado.
+    """
+    # Desfoque Gaussiano
+    blurred_diff = cv2.GaussianBlur(diferenca_raw, kernel_blur_size, 0)
+
+    # Binarização
+    _, thresh_diff = cv2.threshold(blurred_diff, threshold_value_difference, 255, cv2.THRESH_BINARY)
+
+    # Operações Morfológicas (Open e Close)
+    kernel = np.ones((kernel_morph_size, kernel_morph_size), np.uint8)
+    mask_open = cv2.morphologyEx(thresh_diff, cv2.MORPH_OPEN, kernel)
+    mask_full = cv2.morphologyEx(mask_open, cv2.MORPH_CLOSE, kernel)
+
+    # Encontrar contornos
+    contours, _ = cv2.findContours(mask_full, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    prominence_contour = None
+    if contours:
+        # Encontrar o maior contorno (assumindo que seja a gota mais proeminente)
+        prominence_contour = max(contours, key=cv2.contourArea)
+
+    if debug_plots:
+        cv2.imshow("Processed Mask", mask_full)
+        # cv2.waitKey(1)
+
+    return mask_full, prominence_contour
+
+
+def segment_drop(current_image_cv2, base_image_cv2, crop_coords,
+                 threshold_value_difference=25, kernel_blur_size=(5, 5), kernel_morph_size=5, debug_plots=False):
+    """
+    Segmenta a gota da imagem usando subtração de fundo e processamento morfológico.
+
+    Args:
+        current_image_cv2 (np.array): Imagem atual (já rotacionada).
+        base_image_cv2 (np.array): Imagem base (já rotacionada).
+        crop_coords (list): [x1, y1, x2, y2] coordenadas de corte.
+        threshold_value_difference (int): Limiar para a binarização da diferença.
+        kernel_blur_size (tuple): Tamanho do kernel para o desfoque.
+        kernel_morph_size (int): Tamanho do kernel para as operações morfológicas.
+        debug_plots (bool): Se True, mostra plots para depuração.
+
+    Returns:
+        tuple: (mask_full, prominence_contour, cropped_current_color)
+               Retorna dummy_mask/None/dummy_cropped_color se a gota "desaparecer" ou corte inválido.
+    """
+    diferenca_raw, cropped_current_color = calculate_image_difference(base_image_cv2, current_image_cv2, crop_coords, debug_plots)
+
+    # If the droplet disappears or difference calculation failed due to invalid crop
+    if diferenca_raw is None or cropped_current_color is None:
+        # Get dimensions for dummy mask from crop_coords to match expected size
+        x1, y1, x2, y2 = crop_coords
+        dummy_mask_height = max(1, y2 - y1)
+        dummy_mask_width = max(1, x2 - x1)
+        
+        dummy_mask = np.zeros((dummy_mask_height, dummy_mask_width), dtype=np.uint8)
+        dummy_cropped_color = np.zeros((dummy_mask_height, dummy_mask_width, 3), dtype=np.uint8)
+        return dummy_mask, None, dummy_cropped_color
+
+    mask_full, prominence_contour = process_difference_image(
+        diferenca_raw, threshold_value_difference, kernel_blur_size, kernel_morph_size, debug_plots
+    )
+    
+    return mask_full, prominence_contour, cropped_current_color
+
+
+def calculate_measurements(mask_prominence_full, prominence_contour, px_per_mm, mm3_per_ul):
+    """
+    Calcula as medições da gota a partir da máscara e contorno.
+
+    Args:
+        mask_prominence_full (np.array): A máscara binária da gota.
+        prominence_contour (np.array): O contorno da gota.
+        px_per_mm (float): Pixels por milímetro.
         mm3_per_ul (float): Fator de conversão de mm³ para µL.
 
     Returns:
-        tuple: Uma tupla contendo:
-            - np.array: O frame com as gotas detectadas e informações desenhadas.
-            - dict: Dicionário contendo dados de medição para o frame.
-                    Retorna None se nenhuma gota for detectada ou dados forem inválidos.
+        dict: Dicionário com todas as medições calculadas.
     """
-    frame_data = {
-        'frame_number': frame_number,
-        'timestamp': datetime.now().isoformat(), # Usar datetime.now() ou um timestamp real se disponível
-        'droplet_count': 0,
-        'average_diameter_mm': 0.0,
-        'average_volume_ul': 0.0
+    measurements = {
+        'area_pixels': 0, 'cX': 0, 'cY': 0, 'volume_pixels3': 0, 'volume_uL': 0,
+        'base_length_pixels': 0, 'base_length_mm': 0,
+        'height_pixels': 0, 'height_mm': 0, 
+        'form_factor': 0, 
+        'surface_area_total_pixels2': 0, 'surface_area_total_mm2': 0,
+        'base_area_pixels2': 0, 'base_area_mm2': 0,
+        'surface_area_air_pixels2': 0, 'surface_area_air_mm2': 0
     }
-    
-    # --- Início da Lógica de Processamento de Imagem (Você precisará implementar isso) ---
-    # Sugestão de passos:
-    # 1. Subtração de fundo (background subtraction)
-    # 2. Binarização (thresholding)
-    # 3. Detecção de contornos (find contours)
-    # 4. Filtragem de contornos (p.ex., por área, circularidade)
-    # 5. Medição de propriedades das gotas (diâmetro, área)
-    # 6. Desenhar resultados no frame
-    
-    # Exemplo de processamento BÁSICO (APENAS PARA FAZER FUNCIONAR)
-    # Por favor, substitua isso pela sua lógica real de detecção de gotas.
-    
-    display_frame = current_frame.copy() # Frame para desenhar os resultados
 
-    try:
-        # Converta para escala de cinza
-        gray_current = cv2.cvtColor(current_frame, cv2.COLOR_BGR2GRAY)
-        gray_base = cv2.cvtColor(base_frame, cv2.COLOR_BGR2GRAY)
+    if prominence_contour is None or prominence_contour.shape[0] == 0 or np.sum(mask_prominence_full) == 0:
+        return measurements
 
-        # Subtração de fundo
-        diff = cv2.absdiff(gray_current, gray_base)
-        
-        # Binarização (ajuste o threshold conforme necessário)
-        _, thresh = cv2.threshold(diff, 25, 255, cv2.THRESH_BINARY)
-        
-        # Opcional: Operações morfológicas para limpar ruído
-        kernel = np.ones((5,5),np.uint8)
-        thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
-        thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+    measurements['area_pixels'] = np.sum(mask_prominence_full == 255)
 
-        # Detecção de contornos
-        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    M_full = cv2.moments(mask_prominence_full)
+    if M_full["m00"] != 0:
+        measurements['cX'] = int(M_full["m10"] / M_full["m00"])
+        measurements['cY'] = int(M_full["m01"] / M_full["m00"])
+
+    # Calculate volume using Pappus-Guldinus theorem (Volume = 2 * pi * x_bar * Area)
+    if M_full["m00"] != 0:
+        area_2d_pixels = M_full["m00"] / 255.0 # Convert sum of pixel values (0 or 255) to actual pixel count
         
-        droplet_diameters_px = []
-        
-        for contour in contours:
-            # Filtrar por área para evitar pequenos ruídos
-            area = cv2.contourArea(contour)
-            if area < 50: # Ajuste este valor! Área mínima para uma gota (em pixels)
-                continue
+        # Create a mask for the right half of the droplet
+        mask_right_half = np.zeros_like(mask_prominence_full)
+        # Ensure cX is within bounds
+        # Use measurements['cX'] which is already an int.
+        # Clamp to avoid index out of bounds in case of very small/thin mask
+        clamped_cX = np.clip(measurements['cX'], 0, mask_prominence_full.shape[1] -1) 
+        mask_right_half[:, clamped_cX:] = mask_prominence_full[:, clamped_cX:]
+
+        M_right_half = cv2.moments(mask_right_half)
+        if M_right_half["m00"] != 0: # If there's area in the right half
+            area_right_half_pixels = M_right_half["m00"] / 255.0
+            cX_right_half = (M_right_half["m10"] / M_right_half["m00"])
+            x_bar_right_half = abs(cX_right_half - clamped_cX) # Distance from centroid of half to the axis
             
-            # Ajuste de círculo para obter diâmetro
-            (x,y), radius = cv2.minEnclosingCircle(contour)
-            center = (int(x),int(y))
-            radius = int(radius)
-            
-            # Desenhar o círculo e o centro (para depuração)
-            cv2.circle(display_frame,center,radius,(0,255,0),2)
-            # cv2.circle(display_frame,center,2,(0,0,255),3) # Centro
-            
-            diameter_px = 2 * radius
-            droplet_diameters_px.append(diameter_px)
+            measurements['volume_pixels3'] = 2 * np.pi * x_bar_right_half * area_right_half_pixels
+        else:
+            measurements['volume_pixels3'] = 0 # No right half, no volume calculation possible this way
 
-        frame_data['droplet_count'] = len(droplet_diameters_px)
+    if measurements['volume_pixels3'] > 0 and px_per_mm > 0:
+        volume_mm3 = measurements['volume_pixels3'] / (px_per_mm ** 3)
+        measurements['volume_uL'] = volume_mm3 * mm3_per_ul
+
+    # Calculate Base Length (Max X - Min X of the entire contour)
+    # Ensure prominence_contour is not None and has points
+    if prominence_contour is not None and prominence_contour.shape[0] > 0:
+        x_coords = prominence_contour[:, 0, 0]
+        measurements['base_length_pixels'] = np.max(x_coords) - np.min(x_coords)
+        measurements['base_length_mm'] = measurements['base_length_pixels'] / PX_PER_MM
+
+        # Calculate Height (Max Y - Min Y of the entire contour)
+        y_coords = prominence_contour[:, 0, 1]
+        measurements['height_pixels'] = np.max(y_coords) - np.min(y_coords)
+        measurements['height_mm'] = measurements['height_pixels'] / PX_PER_MM
+
+        # Calculate Form Factor
+        if measurements['base_length_mm'] > 0:
+            measurements['form_factor'] = measurements['height_mm'] / measurements['base_length_mm']
+        else:
+            measurements['form_factor'] = 0
+
+        # Calculate Surface Area
+        total_perimeter_revolved_pixels2 = 0
+        for i in range(prominence_contour.shape[0]):
+            p1 = prominence_contour[i, 0]
+            p2 = prominence_contour[(i + 1) % prominence_contour.shape[0], 0]
+
+            segment_length = np.sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)
+            mid_x = (p1[0] + p2[0]) / 2
+            radius = abs(mid_x - measurements['cX']) # Distance from midpoint to centroid X
+            
+            total_perimeter_revolved_pixels2 += 2 * np.pi * radius * segment_length
+
+        measurements['surface_area_total_pixels2'] = total_perimeter_revolved_pixels2 / 2.0
+        measurements['surface_area_total_mm2'] = measurements['surface_area_total_pixels2'] / (PX_PER_MM ** 2)
+
+        # Calculate Base Area (assuming circular base based on base_length_pixels as diameter)
+        if measurements['base_length_pixels'] > 0:
+            base_radius_pixels = measurements['base_length_pixels'] / 2.0
+            measurements['base_area_pixels2'] = np.pi * (base_radius_pixels ** 2)
+            measurements['base_area_mm2'] = measurements['base_area_pixels2'] / (PX_PER_MM ** 2)
         
-        if droplet_diameters_px:
-            avg_diameter_px = np.mean(droplet_diameters_px)
-            avg_diameter_mm = avg_diameter_px / px_per_mm
-            
-            # Volume de uma esfera: V = (4/3) * pi * (diam/2)^3
-            # Convertendo diâmetro de mm para raio em mm
-            avg_radius_mm = avg_diameter_mm / 2.0
-            avg_volume_mm3 = (4/3) * np.pi * (avg_radius_mm**3)
-            avg_volume_ul = avg_volume_mm3 * mm3_per_ul # mm3_per_ul geralmente é 1 (1 mm³ = 1 µL)
+        # Calculate Surface Area in contact with air (Total - Base)
+        measurements['surface_area_air_pixels2'] = measurements['surface_area_total_pixels2'] - measurements['base_area_pixels2']
+        measurements['surface_area_air_mm2'] = measurements['surface_area_total_mm2'] - measurements['base_area_mm2']
 
-            frame_data['average_diameter_mm'] = avg_diameter_mm
-            frame_data['average_volume_ul'] = avg_volume_ul
-            
-            # Desenhar informações no frame
-            info_text = f"Gotas: {frame_data['droplet_count']} | Diam: {avg_diameter_mm:.2f}mm | Vol: {avg_volume_ul:.2f}uL"
-            cv2.putText(display_frame, info_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2, cv2.LINE_AA)
-        
-    except Exception as e:
-        print(f"Erro na lógica de processamento de gotas no frame {frame_number}: {e}")
-        # Retorna o frame original ou um frame vazio em caso de erro
-        return current_frame, None
-
-    # --- Fim da Lógica de Processamento de Imagem ---
-
-    return display_frame, frame_data
+    return measurements
