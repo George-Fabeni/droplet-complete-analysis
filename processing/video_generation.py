@@ -142,7 +142,7 @@ def process_images_and_generate_video(
                             font, font_scale, text_color, font_thickness, cv2.LINE_AA)
                 cv2.putText(processed_frame_for_video, f'Base Length: {measurements["base_length_mm"]:.2f} mm', (10, 60),
                             font, font_scale, text_color, font_thickness, cv2.LINE_AA)
-                cv2.putText(processed_frame_for_video, f'Volume: {measurements["height_mm"]:.2f} mm', (10, 80),
+                cv2.putText(processed_frame_for_video, f'Height: {measurements["height_mm"]:.2f} mm', (10, 80),
                             font, font_scale, text_color, font_thickness, cv2.LINE_AA)
                 cv2.putText(processed_frame_for_video, f'Form factor: {measurements["form_factor"]:.2f}', (10, 100),
                             font, font_scale, text_color, font_thickness, cv2.LINE_AA)
