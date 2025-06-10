@@ -1,7 +1,7 @@
 # config/settings.py
 
 # Parâmetros de calibração (ajuste conforme seu setup)
-PX_PER_MM = 20.0  # Exemplo: 20 pixels por milímetro
+PX_PER_MM = 163.28  # Exemplo: 20 pixels por milímetro
 MM3_PER_UL = 1.0  # 1 mm^3 = 1 uL (conversão padrão)
 
 # Caminhos padrão

@@ -63,7 +63,7 @@ def process_images_and_generate_video(
 
     for i, img_path in enumerate(image_paths):
         try:
-            print(f"Processando imagem {i+1}/{len(image_paths)}: {os.path.basename(img_path)}")
+            print(f"Processando imagem {i+1}/{len(image_paths)}")
 
             current_image_full_res = load_image_cv2(img_path)
             current_image_rotated = rotate_image(current_image_full_res, rotation_angle)
@@ -95,7 +95,6 @@ def process_images_and_generate_video(
             # Adicionar dados específicos do frame ao dicionário de medições
             measurements['frame_number'] = i + 1
             measurements['image_name'] = os.path.basename(img_path)
-            measurements['timestamp'] = datetime.now().isoformat() # Ou um timestamp mais preciso se disponível
 
             measurements_data.append(measurements)
 
@@ -103,18 +102,7 @@ def process_images_and_generate_video(
             # Você pode querer desenhar o contorno, o centroide, e as medições no `processed_frame_for_video`
             # antes de escrevê-lo no vídeo.
             if prominence_contour is not None and prominence_contour.shape[0] > 0:
-                # Desenhar contorno. Offset prominence_contour by -x1, -y1 if it's relative to global image.
-                # No nosso caso, mask_full e prominence_contour já são do tamanho do cropped_current_color,
-                # então as coordenadas do contorno já estão corretas para processed_frame_for_video.
-                
-                # Se as medidas cX, cY foram calculadas no cropped_current_color, 
-                # elas se referem a esse frame. Podemos desenhar nele.
-                # Redimensionar o contorno se processed_frame_for_video for diferente de cropped_current_color
-                
-                # Para desenhar o contorno no frame redimensionado para vídeo:
-                # O contorno está na escala do cropped_current_color.
-                # processed_frame_for_video tem dimensões (width, height).
-                # Se width != cropped_current_color.shape[1] ou height != cropped_current_color.shape[0]:
+
                 scale_w = width / cropped_current_color.shape[1]
                 scale_h = height / cropped_current_color.shape[0]
                 
@@ -132,12 +120,34 @@ def process_images_and_generate_video(
                 cv2.circle(processed_frame_for_video, (scaled_cX, scaled_cY), 5, (0, 0, 255), -1) # Vermelho
                 
                 # Desenhar texto com medições
-                info_text = (f"Frame: {i+1} | Area: {measurements['area_pixels']:.0f}px | "
+                
+                '''info_text = (f"Frame: {i+1} | Area: {measurements['area_pixels']:.0f}px | "
                              f"Vol: {measurements['volume_uL']:.3f}uL | "
                              f"Diam_B: {measurements['base_length_mm']:.2f}mm | "
                              f"Height: {measurements['height_mm']:.2f}mm")
                 cv2.putText(processed_frame_for_video, info_text, (10, 30), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2, cv2.LINE_AA) # Amarelo
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2, cv2.LINE_AA) '''
+                
+                # ------------- TESTE ------------------ 
+                # DESCOMENTAR PARTE ANTERIOR SE O TESTE DER ERRADO
+                
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                font_scale = 0.6
+                font_thickness = 1
+                text_color = (0, 0, 0)
+
+                cv2.putText(processed_frame_for_video, f'Area: {measurements["surface_area_total_mm2"]:.2f} mm^2', (10, 20),
+                            font, font_scale, text_color, font_thickness, cv2.LINE_AA)
+                cv2.putText(processed_frame_for_video, f'Volume: {measurements["volume_uL"]:.2f} uL', (10, 40),
+                            font, font_scale, text_color, font_thickness, cv2.LINE_AA)
+                cv2.putText(processed_frame_for_video, f'Base Length: {measurements["base_length_mm"]:.2f} mm', (10, 60),
+                            font, font_scale, text_color, font_thickness, cv2.LINE_AA)
+                cv2.putText(processed_frame_for_video, f'Volume: {measurements["height_mm"]:.2f} mm', (10, 80),
+                            font, font_scale, text_color, font_thickness, cv2.LINE_AA)
+                cv2.putText(processed_frame_for_video, f'Form factor: {measurements["form_factor"]:.2f}', (10, 100),
+                            font, font_scale, text_color, font_thickness, cv2.LINE_AA)
+                
+                #---------- FIM DO TESTE ---------------
 
 
             out.write(processed_frame_for_video)
@@ -153,12 +163,12 @@ def process_images_and_generate_video(
     out.release()
 
     # --- REMOVER GERAÇÃO DE CSV SE NÃO FOR ÚTIL ---
-    # if measurements_data:
-    #     df = pd.DataFrame(measurements_data)
-    #     df.to_csv(output_csv_path, index=False)
-    #     print(f"Dados de medição salvos em: {output_csv_path}")
-    # else:
-    #     print("Nenhum dado de medição foi coletado.")
+    if measurements_data:
+        df = pd.DataFrame(measurements_data)
+        df.to_csv(output_csv_path, index=False)
+        print(f"Dados de medição salvos em: {output_csv_path}")
+    else:
+        print("Nenhum dado de medição foi coletado.")
     # --- FIM DA REMOÇÃO ---
 
     print(f"Vídeo salvo em: {output_video_path}")

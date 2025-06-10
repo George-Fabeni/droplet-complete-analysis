@@ -2,7 +2,6 @@
 import cv2
 import numpy as np
 import pandas as pd # Se você precisar de pandas aqui para algo, caso contrário remova
-from datetime import datetime # Para o timestamp
 
 # Certifique-se de que PX_PER_MM e MM3_PER_UL estejam disponíveis aqui,
 # seja importando-os ou passando-os como argumentos.
@@ -56,9 +55,33 @@ def calculate_image_difference(base_image_cv2, current_image_cv2, crop_coords, d
     # Converte para escala de cinza para calcular a diferença
     gray_base = cv2.cvtColor(cropped_base, cv2.COLOR_BGR2GRAY)
     gray_current = cv2.cvtColor(cropped_current, cv2.COLOR_BGR2GRAY)
+    
+    #------------ TESTE -------------------
+    _, thresholded_base = cv2.threshold(gray_base, 50, 255, cv2.THRESH_BINARY_INV)
+    _, thresholded_current = cv2.threshold(gray_current, 50, 255, cv2.THRESH_BINARY_INV)
+    contours_base, _ = cv2.findContours(thresholded_base, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours_current, _ = cv2.findContours(thresholded_current, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    base_filled = np.ones_like(gray_base) * 255  # fundo branco
+    if contours_base:
+        largest_contour = max(contours_base, key=cv2.contourArea)
+        # Desenhar a gota em preto sobre fundo branco
+        cv2.drawContours(base_filled, [largest_contour], -1, (0,), thickness=cv2.FILLED)
 
+    current_filled = np.ones_like(gray_current) * 255  # fundo branco
+    if contours_current:
+        largest_contour = max(contours_current, key=cv2.contourArea)
+        # Desenhar a gota em preto sobre fundo branco
+        cv2.drawContours(current_filled, [largest_contour], -1, (0,), thickness=cv2.FILLED)
+        
+        
+    diferenca_raw = cv2.absdiff(current_filled, base_filled)
+        
+    #------------ FIM DO TESTE -------------------
+    
+    # Descomentar em caso de falha do teste
     # Calcula a diferença absoluta
-    diferenca_raw = cv2.absdiff(gray_current, gray_base)
+    # diferenca_raw = cv2.absdiff(gray_current, gray_base)
 
     if debug_plots:
         cv2.imshow("Difference Raw (Cropped)", diferenca_raw)
