@@ -2,10 +2,6 @@
 import cv2
 import numpy as np
 import pandas as pd # Se você precisar de pandas aqui para algo, caso contrário remova
-
-# Certifique-se de que PX_PER_MM e MM3_PER_UL estejam disponíveis aqui,
-# seja importando-os ou passando-os como argumentos.
-# Por simplicidade, vou assumir que são passados ou importados de settings.
 from config.settings import PX_PER_MM, MM3_PER_UL
 
 
@@ -56,7 +52,11 @@ def calculate_image_difference(base_image_cv2, current_image_cv2, crop_coords, d
     gray_base = cv2.cvtColor(cropped_base, cv2.COLOR_BGR2GRAY)
     gray_current = cv2.cvtColor(cropped_current, cv2.COLOR_BGR2GRAY)
     
-    #------------ TESTE -------------------
+    # ------------ CORREÇÃO DE PROBLEMA COM REFLEXOS NA GOTA -------------------
+    # Os reflexos nas gotas causavam problemas na identificação dos contornos. 
+    # O código abaixo corrige isso ao aplicar um thresholding inicial, 
+    # com espessura "thickness=cv2.FILLED, que preenche tudo que está
+    # abaixo com pixels pretos, eliminando os reflexos.
     _, thresholded_base = cv2.threshold(gray_base, 50, 255, cv2.THRESH_BINARY_INV)
     _, thresholded_current = cv2.threshold(gray_current, 50, 255, cv2.THRESH_BINARY_INV)
     contours_base, _ = cv2.findContours(thresholded_base, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -77,11 +77,7 @@ def calculate_image_difference(base_image_cv2, current_image_cv2, crop_coords, d
         
     diferenca_raw = cv2.absdiff(current_filled, base_filled)
         
-    #------------ FIM DO TESTE -------------------
-    
-    # Descomentar em caso de falha do teste
-    # Calcula a diferença absoluta
-    # diferenca_raw = cv2.absdiff(gray_current, gray_base)
+    # ------------ FIM DA CORREÇÃO  -------------------
 
     if debug_plots:
         cv2.imshow("Difference Raw (Cropped)", diferenca_raw)

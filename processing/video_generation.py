@@ -2,7 +2,6 @@
 import cv2
 import os
 import pandas as pd
-from datetime import datetime # Certifique-se de que esta linha está presente
 import numpy as np
 
 from processing.utils import load_image_cv2, rotate_image
