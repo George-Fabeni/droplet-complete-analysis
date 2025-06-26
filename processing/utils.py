@@ -42,7 +42,7 @@ def rotate_image(image, angle):
     rotated_img = cv2.warpAffine(image, M, (w, h), borderMode=cv2.BORDER_REPLICATE)
     return rotated_img
 
-def create_display_frame(cropped_original_color, prominence_contour, measurements, show_metrics_text=True):
+'''def create_display_frame(cropped_original_color, prominence_contour, measurements, show_metrics_text=True):
     """Creates a display frame with contour and metrics."""
     display_frame = cropped_original_color.copy()
 
@@ -84,4 +84,4 @@ def create_display_frame(cropped_original_color, prominence_contour, measurement
                     cv2.putText(display_frame, text, (10, y_offset), font, font_scale, text_color, font_thickness, cv2.LINE_AA)
                     y_offset += 25 # Increment line spacing
 
-    return display_frame
+    return display_frame'''

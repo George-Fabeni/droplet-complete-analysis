@@ -27,6 +27,9 @@ class ImageEditorFrame(ttk.Frame):
     def _create_widgets(self):
         self.image_label = ttk.Label(self)
         self.image_label.grid(row=0, column=0, columnspan=2, padx=10, pady=10, sticky="nsew")
+        
+        '''self.second_image_label = ttk.Label(self)
+        self.second_image_label.grid(row=0, column=1, columnspan=2, padx=10, pady=10, sticky="nsew")'''
 
         self.brightness_slider = tk.Scale(self, from_=0, to=200, orient=tk.HORIZONTAL, label="Brilho (%)", 
                                           variable=self.brightness_var, command=self._on_slider_change)

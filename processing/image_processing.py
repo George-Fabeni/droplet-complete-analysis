@@ -1,8 +1,8 @@
 # processing/image_processing.py
 import cv2
 import numpy as np
-import pandas as pd # Se você precisar de pandas aqui para algo, caso contrário remova
-from config.settings import PX_PER_MM, MM3_PER_UL
+from config.settings import PX_PER_MM, INITIAL_CONC
+from config.settings import THRESHOLD_VALUE_DIFFERENCE
 
 
 def calculate_image_difference(base_image_cv2, current_image_cv2, crop_coords, debug_plots=False):
@@ -57,8 +57,8 @@ def calculate_image_difference(base_image_cv2, current_image_cv2, crop_coords, d
     # O código abaixo corrige isso ao aplicar um thresholding inicial, 
     # com espessura "thickness=cv2.FILLED, que preenche tudo que está
     # abaixo com pixels pretos, eliminando os reflexos.
-    _, thresholded_base = cv2.threshold(gray_base, 50, 255, cv2.THRESH_BINARY_INV)
-    _, thresholded_current = cv2.threshold(gray_current, 50, 255, cv2.THRESH_BINARY_INV)
+    _, thresholded_base = cv2.threshold(gray_base, THRESHOLD_VALUE_DIFFERENCE, 255, cv2.THRESH_BINARY_INV)
+    _, thresholded_current = cv2.threshold(gray_current, THRESHOLD_VALUE_DIFFERENCE, 255, cv2.THRESH_BINARY_INV)
     contours_base, _ = cv2.findContours(thresholded_base, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     contours_current, _ = cv2.findContours(thresholded_current, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
@@ -165,7 +165,7 @@ def segment_drop(current_image_cv2, base_image_cv2, crop_coords,
     return mask_full, prominence_contour, cropped_current_color
 
 
-def calculate_measurements(mask_prominence_full, prominence_contour, px_per_mm, mm3_per_ul):
+def calculate_measurements(mask_prominence_full, prominence_contour, px_per_mm, mm3_per_ul, initial_volume=None):
     """
     Calcula as medições da gota a partir da máscara e contorno.
 
@@ -185,7 +185,7 @@ def calculate_measurements(mask_prominence_full, prominence_contour, px_per_mm, 
         'form_factor': 0, 
         'surface_area_total_pixels2': 0, 'surface_area_total_mm2': 0,
         'base_area_pixels2': 0, 'base_area_mm2': 0,
-        'surface_area_air_pixels2': 0, 'surface_area_air_mm2': 0
+        'surface_area_air_pixels2': 0, 'surface_area_air_mm2': 0, "concentration": 0
     }
 
     if prominence_contour is None or prominence_contour.shape[0] == 0 or np.sum(mask_prominence_full) == 0:
@@ -266,5 +266,14 @@ def calculate_measurements(mask_prominence_full, prominence_contour, px_per_mm, 
         # Calculate Surface Area in contact with air (Total - Base)
         measurements['surface_area_air_pixels2'] = measurements['surface_area_total_pixels2'] - measurements['base_area_pixels2']
         measurements['surface_area_air_mm2'] = measurements['surface_area_total_mm2'] - measurements['base_area_mm2']
+        
+        
+        # Calculate concentration
+        
+        if initial_volume and initial_volume != 0:
+            measurements["concentration"] = INITIAL_CONC * ( initial_volume / measurements["volume_uL"])
+        else:
+            measurements["concentration"] = INITIAL_CONC 
+            
 
     return measurements

@@ -9,42 +9,34 @@ def apply_adjustments_cv2(img_bgr, brightness_factor, exposure_factor, contrast_
     
     Args:
         img_bgr (np.array): Original image in BGR format (uint8).
-        brightness_factor (float): Multiplicative factor for brightness (e.g., 1.2 for +20%).
-        exposure_factor (float): Multiplicative factor for exposure (e.g., 1.2 for +20%).
-        contrast_factor (float): Multiplicative factor for contrast (e.g., 1.2 for +20%).
-        highlights_factor (float): Multiplicative factor for pixels >= 128.
+        brightness_factor, exposure_factor, contrast_factor: All float, all multiplicative factors.
+        highlights_factor: Multiplicative factor for pixels >= 128.
         shadows_factor (float): Multiplicative factor for pixels < 128.
 
-    Returns:
-        np.array: Adjusted image in BGR format (uint8).
     """
-    img_np = img_bgr.astype(np.float32)
-
-    # Apply brightness
-    img_np *= brightness_factor
-    img_np = np.clip(img_np, 0, 255)
-
-    # Apply exposure
-    img_np *= exposure_factor
-    img_np = np.clip(img_np, 0, 255)
-
-    # Apply contrast around the mean
-    mean = np.mean(img_np, axis=(0, 1), keepdims=True)
-    img_np = (img_np - mean) * contrast_factor + mean
-    img_np = np.clip(img_np, 0, 255)
-
-    # Highlights and Shadows
-    gray_temp = cv2.cvtColor(img_np.astype(np.uint8), cv2.COLOR_BGR2GRAY) # Convert to uint8 for cvtColor
-
-    shadows_mask = (gray_temp < 128)
-    highlights_mask = (gray_temp >= 128)
-
-    shadows_mask_3d = shadows_mask[:, :, np.newaxis]
-    highlights_mask_3d = highlights_mask[:, :, np.newaxis]
-
-    img_np = np.where(shadows_mask_3d, img_np * shadows_factor, img_np)
-    img_np = np.where(highlights_mask_3d, img_np * highlights_factor, img_np)
     
-    img_np = np.clip(img_np, 0, 255).astype(np.uint8)
+    # Conversão para float32 apenas uma vez
+    img = img_bgr.astype(np.float32)
+    
+    # Ajuste de brilho e exposição (fatores multiplicativos combinados)
+    img *= brightness_factor * exposure_factor
+    
+    # Ajuste de contraste em torno da média
+    mean = np.mean(img, axis=(0, 1), keepdims=True)
+    img = (img - mean) * contrast_factor + mean
+    
+    # Converte temporariamente para escala de cinza para gerar as máscaras
+    gray = cv2.cvtColor(img.astype(np.uint8), cv2.COLOR_BGR2GRAY)
+    
+    # Máscaras para sombras e luzes
+    shadows_mask = gray < 128
+    highlights_mask = ~shadows_mask  # mais rápido que gray >= 128
+    
+    # Aplicação direta nos canais RGB usando máscaras booleanas
+    for c in range(3):  # B, G, R
+        img[..., c][shadows_mask] *= shadows_factor
+        img[..., c][highlights_mask] *= highlights_factor
+    
+    # Clipping final e conversão para uint8
+    return np.clip(img, 0, 255).astype(np.uint8)
 
-    return img_np

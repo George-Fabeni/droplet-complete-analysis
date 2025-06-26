@@ -1,15 +1,16 @@
 # config/settings.py
 
 # Parâmetros de calibração (ajuste conforme seu setup)
-PX_PER_MM = 163.28  # Exemplo: 20 pixels por milímetro
+PX_PER_MM = 167  # Exemplo: 20 pixels por milímetro
 MM3_PER_UL = 1.0  # 1 mm^3 = 1 uL (conversão padrão)
+INITIAL_CONC = 6
 
 # Caminhos padrão
 DEFAULT_IMAGE_FOLDER = "images/" # Onde suas imagens de entrada estarão
 DEFAULT_OUTPUT_FOLDER = "output/" # Onde o vídeo e resultados serão salvos
 
 # Parâmetros padrão para processamento de imagem
-DEFAULT_THRESHOLD_VALUE_DIFFERENCE = 30
+#DEFAULT_THRESHOLD_VALUE_DIFFERENCE = 30
 DEFAULT_KERNEL_BLUR_SIZE = (5, 5)
 DEFAULT_KERNEL_MORPH_SIZE = (5, 5)
 
@@ -27,9 +28,9 @@ DEFAULT_SHADOWS = 100
 
 # Outras configurações
 DEBUG_PLOTS_ENABLED = False # Habilita plots de depuração em janelas separadas
-PREVIEW_THUMBNAIL_SIZE = (600, 400) # Tamanho máximo para a imagem de preview na GUI
+PREVIEW_THUMBNAIL_SIZE = (450, 300) # Tamanho máximo para a imagem de preview na GUI
 VIDEO_FPS = 10.0 # Frames por segundo do vídeo de saída
 
-THRESHOLD_VALUE_DIFFERENCE = 25 # Threshold para a diferença de imagem
+THRESHOLD_VALUE_DIFFERENCE = 60 # Threshold para a diferença de imagem
 KERNEL_BLUR_SIZE = (5, 5) # Tamanho do kernel para o desfoque Gaussiano
 KERNEL_MORPH_SIZE = 5 # Tamanho do kernel para operações morfológicas (OPEN/CLOSE)

@@ -3,6 +3,7 @@ import cv2
 import os
 import pandas as pd
 import numpy as np
+import time
 
 from processing.utils import load_image_cv2, rotate_image
 # IMPORTAR SUAS FUNÇÕES ESPECÍFICAS AQUI
@@ -31,6 +32,7 @@ def process_images_and_generate_video(
     # We will pass the crop_coords directly to segment_drop for each image.
 
     measurements_data = [] # Lista para armazenar os dados de medição
+    initial_volume = None
 
     # Determine video dimensions from the *first* image's crop, or fallback to default
     # This loop is just to get the first valid frame's dimensions for video writer initialization
@@ -60,36 +62,40 @@ def process_images_and_generate_video(
 
     print(f"Iniciando processamento de {len(image_paths)} imagens e geração de vídeo...")
 
+    start = time.time()
     for i, img_path in enumerate(image_paths):
         try:
             print(f"Processando imagem {i+1}/{len(image_paths)}")
 
             current_image_full_res = load_image_cv2(img_path)
             current_image_rotated = rotate_image(current_image_full_res, rotation_angle)
-
-            # --- SEGMENTAR A GOTA USANDO SUA LÓGICA ---
+            
+            #--------------TESTE---------
+            
+            current_image_adjusted = apply_adjustments_cv2(
+                current_image_rotated, brightness, exposure, contrast, highlights, shadows)
+            
             mask_full, prominence_contour, cropped_current_color = segment_drop(
-                current_image_rotated, base_image_rotated, crop_coords,
+                current_image_adjusted, base_image_rotated, crop_coords,
                 THRESHOLD_VALUE_DIFFERENCE, KERNEL_BLUR_SIZE, KERNEL_MORPH_SIZE, debug_plots=False
             )
-
+            
             if cropped_current_color is None or cropped_current_color.shape[0] == 0 or cropped_current_color.shape[1] == 0:
                 print(f"Atenção: Imagem {os.path.basename(img_path)} resultou em um frame cropped vazio. Pulando processamento.")
                 continue # Skip this frame if it's empty after segment_drop
-
-            # Aplicar ajustes de imagem (Brilho, Contraste, etc.)
-            # Estes ajustes são aplicados no frame *já cortado*
-            current_image_adjusted = apply_adjustments_cv2(
-                cropped_current_color, brightness, exposure, contrast, highlights, shadows
-            )
-
+            
             # Redimensionar para o tamanho do vídeo (definido no início)
-            # Isso é crucial para que todos os frames tenham o mesmo tamanho
-            processed_frame_for_video = cv2.resize(current_image_adjusted, (width, height))
+            processed_frame_for_video = cv2.resize(cropped_current_color, (width, height))
+            
+            
+            #--------- FIM DO TESTE -------
 
-
-            # --- CALCULAR MEDIÇÕES USANDO SUA LÓGICA ---
-            measurements = calculate_measurements(mask_full, prominence_contour, PX_PER_MM, MM3_PER_UL)
+            # Condition for initial volume, allowing us to calculate the concentration
+            if i == 0:
+                measurements = calculate_measurements(mask_full, prominence_contour, PX_PER_MM, MM3_PER_UL)
+                initial_volume = measurements["volume_uL"]
+            else:
+                measurements = calculate_measurements(mask_full, prominence_contour, PX_PER_MM, MM3_PER_UL, initial_volume)
             
             # Adicionar dados específicos do frame ao dicionário de medições
             measurements['frame_number'] = i + 1
@@ -118,14 +124,6 @@ def process_images_and_generate_video(
                 scaled_cY = int(measurements['cY'] * scale_h)
                 cv2.circle(processed_frame_for_video, (scaled_cX, scaled_cY), 5, (0, 0, 255), -1) # Vermelho
                 
-                # Desenhar texto com medições
-                
-                '''info_text = (f"Frame: {i+1} | Area: {measurements['area_pixels']:.0f}px | "
-                             f"Vol: {measurements['volume_uL']:.3f}uL | "
-                             f"Diam_B: {measurements['base_length_mm']:.2f}mm | "
-                             f"Height: {measurements['height_mm']:.2f}mm")
-                cv2.putText(processed_frame_for_video, info_text, (10, 30), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2, cv2.LINE_AA) '''
                 
                 # ------------- TESTE ------------------ 
                 # DESCOMENTAR PARTE ANTERIOR SE O TESTE DER ERRADO
@@ -135,15 +133,17 @@ def process_images_and_generate_video(
                 font_thickness = 1
                 text_color = (0, 0, 0)
 
-                cv2.putText(processed_frame_for_video, f'Area: {measurements["surface_area_total_mm2"]:.2f} mm^2', (10, 20),
+                cv2.putText(processed_frame_for_video, f'Area: {measurements["surface_area_air_mm2"]:.2f} mm^2', (5, 20),
                             font, font_scale, text_color, font_thickness, cv2.LINE_AA)
-                cv2.putText(processed_frame_for_video, f'Volume: {measurements["volume_uL"]:.2f} uL', (10, 40),
+                cv2.putText(processed_frame_for_video, f'Volume: {measurements["volume_uL"]:.2f} uL', (5, 40),
                             font, font_scale, text_color, font_thickness, cv2.LINE_AA)
-                cv2.putText(processed_frame_for_video, f'Base Length: {measurements["base_length_mm"]:.2f} mm', (10, 60),
+                cv2.putText(processed_frame_for_video, f'Base Length: {measurements["base_length_mm"]:.2f} mm', (5, 60),
                             font, font_scale, text_color, font_thickness, cv2.LINE_AA)
-                cv2.putText(processed_frame_for_video, f'Height: {measurements["height_mm"]:.2f} mm', (10, 80),
+                cv2.putText(processed_frame_for_video, f'Height: {measurements["height_mm"]:.2f} mm', (5, 80),
                             font, font_scale, text_color, font_thickness, cv2.LINE_AA)
-                cv2.putText(processed_frame_for_video, f'Form factor: {measurements["form_factor"]:.2f}', (10, 100),
+                cv2.putText(processed_frame_for_video, f'Form factor: {measurements["form_factor"]:.2f}', (5, 100),
+                            font, font_scale, text_color, font_thickness, cv2.LINE_AA)
+                cv2.putText(processed_frame_for_video, f'Concentration: {measurements["concentration"]:.2f}%', (5, 120),
                             font, font_scale, text_color, font_thickness, cv2.LINE_AA)
                 
                 #---------- FIM DO TESTE ---------------
@@ -159,6 +159,7 @@ def process_images_and_generate_video(
                 out.write(blank_frame)
             continue # Continue para a próxima imagem
 
+    print(f"Tempo de ajuste: {time.time() - start:.4f} segundos")
     out.release()
 
     # --- REMOVER GERAÇÃO DE CSV SE NÃO FOR ÚTIL ---
