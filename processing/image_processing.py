@@ -38,15 +38,31 @@ def calculate_image_difference(base_image_cv2, current_image_cv2, crop_coords, d
     safe_y2 = min(h_current, y2) # Min com a altura da imagem atual
 
     # Se a área de corte resultante for inválida após o clamping, retorne None
-    if safe_x2 <= safe_x1 or safe_y2 <= safe_y1:
-        print(f"Warning: Calculated crop area [{safe_x1},{safe_y1},{safe_x2},{safe_y2}] is invalid for current image dimensions ({w_current}x{h_current}). Returning dummy mask.")
-        return None, None
+    
+    #------------TESTE-----------
+    
+    if safe_x2 > safe_x1 and safe_y2 > safe_y1:
+        cropped_base = base_image_cv2[safe_y1:safe_y2, safe_x1:safe_x2]
+        cropped_current = current_image_cv2[safe_y1:safe_y2, safe_x1:safe_x2]
 
-    # Aplica o mesmo corte tanto para a imagem base quanto para a imagem atual
-    cropped_base = base_image_cv2[safe_y1:safe_y2, safe_x1:safe_x2]
-    cropped_current = current_image_cv2[safe_y1:safe_y2, safe_x1:safe_x2]
+        cropped_original_color = current_image_cv2[safe_y1:safe_y2, safe_x1:safe_x2].copy() # Cópia para o output
+    
+    else:
+        cropped_base = base_image_cv2
+        cropped_current = current_image_cv2
+        cropped_original_color = current_image_cv2
+    
+    #--------- FIM DO TESTE------
+    
+    # if safe_x2 <= safe_x1 or safe_y2 <= safe_y1:
+    #     print(f"Warning: Calculated crop area [{safe_x1},{safe_y1},{safe_x2},{safe_y2}] is invalid for current image dimensions ({w_current}x{h_current}). Returning dummy mask.")
+    #     return None, None
 
-    cropped_original_color = current_image_cv2[safe_y1:safe_y2, safe_x1:safe_x2].copy() # Cópia para o output
+    # # Aplica o mesmo corte tanto para a imagem base quanto para a imagem atual
+    # cropped_base = base_image_cv2[safe_y1:safe_y2, safe_x1:safe_x2]
+    # cropped_current = current_image_cv2[safe_y1:safe_y2, safe_x1:safe_x2]
+
+    # cropped_original_color = current_image_cv2[safe_y1:safe_y2, safe_x1:safe_x2].copy() # Cópia para o output
 
     # Converte para escala de cinza para calcular a diferença
     gray_base = cv2.cvtColor(cropped_base, cv2.COLOR_BGR2GRAY)

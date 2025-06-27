@@ -27,6 +27,8 @@ def process_images_and_generate_video(
     # Load and process base image once (full resolution, rotated)
     base_image_full_res = load_image_cv2(base_image_path)
     base_image_rotated = rotate_image(base_image_full_res, rotation_angle)
+    base_image_adjusted = apply_adjustments_cv2(
+        base_image_rotated, brightness, exposure, contrast, highlights, shadows)
 
     # Base image is used for difference, but the video dimensions will come from the *first* cropped image.
     # We will pass the crop_coords directly to segment_drop for each image.
@@ -76,7 +78,7 @@ def process_images_and_generate_video(
                 current_image_rotated, brightness, exposure, contrast, highlights, shadows)
             
             mask_full, prominence_contour, cropped_current_color = segment_drop(
-                current_image_adjusted, base_image_rotated, crop_coords,
+                current_image_adjusted, base_image_adjusted, crop_coords,
                 THRESHOLD_VALUE_DIFFERENCE, KERNEL_BLUR_SIZE, KERNEL_MORPH_SIZE, debug_plots=False
             )
             

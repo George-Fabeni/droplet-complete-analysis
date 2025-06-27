@@ -46,7 +46,7 @@ class DropletAnalyzerApp(tk.Tk):
                                              label="Imagem Atual", command=self._on_image_index_change)
         self.image_index_slider.grid(row=0, column=0, sticky='ew', padx=5, pady=5)
 
-        self.image_editor_frame = ImageEditorFrame(left_panel)
+        self.image_editor_frame = ImageEditorFrame(left_panel, self.crop_coords)
         self.image_editor_frame.grid(row=1, column=0, sticky='nsew', pady=10)
 
         right_panel = ttk.Frame(self, padding="10")
@@ -86,6 +86,7 @@ class DropletAnalyzerApp(tk.Tk):
             self.current_image_index = 0
             self.image_index_slider.set(self.current_image_index)
             self._load_and_display_current_image()
+    
         else:
             messagebox.showinfo("Info", "Nenhuma imagem encontrada na pasta selecionada.")
             self.image_index_slider.config(to=0)
@@ -104,6 +105,7 @@ class DropletAnalyzerApp(tk.Tk):
         if filepath:
             self.base_image_path = filepath
             self.base_image_path_var.set(filepath)
+            self._load_and_display_current_image()
 
     def _on_image_index_change(self, val):
         self.current_image_index = int(val)
@@ -115,37 +117,99 @@ class DropletAnalyzerApp(tk.Tk):
 
     def _load_and_display_current_image(self):
         """
-        Loads the full-res image, applies rotation, crops it if crop_coords are set,
-        and then sends the result to the ImageEditorFrame for display.
+        Carrega a imagem de resolução total, aplica rotação, corta-a se crop_coords estiverem definidos,
+        e então envia o resultado para o ImageEditorFrame para exibição e processamento.
         """
+        # Verifica se há imagens carregadas e um índice válido
         if self.current_image_index != -1 and self.image_paths:
             current_path = self.image_paths[self.current_image_index]
+            
+            # Inicializa variáveis para o caso de erro ou ausência
+            base_image_display = None # Imagem de base para exibição (pode ser cropped/redimensionada)
+            current_image_full_res_for_processing = None # Imagem atual full-res para processamento
+            base_image_full_res_for_processing = None    # Imagem de base full-res para processamento
+            
             try:
-                img_cv2 = load_image_cv2(current_path)
+                # 1. Carrega e rotaciona a imagem atual (full-res)
+                img_full_res = load_image_cv2(current_path)
+                current_image_full_res_for_processing = rotate_image(img_full_res, self.rotation_angle.get())
+                self.current_image_full_res_cv2 = current_image_full_res_for_processing
                 
-                # Store full-res rotated image
-                self.current_image_full_res_cv2 = rotate_image(img_cv2, self.rotation_angle.get())
+                # 2. Lógica para carregar e rotacionar a imagem de base (full-res)
+                base_img_path_str = self.base_image_path_var.get()
                 
-                # Apply cropping if crop_coords are defined and valid
-                x1, y1, x2, y2 = self.crop_coords
-                if x2 > x1 and y2 > y1 and \
-                   x1 >= 0 and y1 >= 0 and \
-                   x2 <= self.current_image_full_res_cv2.shape[1] and \
-                   y2 <= self.current_image_full_res_cv2.shape[0]:
-                    self.current_image_display_cv2 = self.current_image_full_res_cv2[y1:y2, x1:x2].copy()
+                if base_img_path_str and os.path.exists(base_img_path_str):
+                    try:
+                        full_res_base = load_image_cv2(base_img_path_str)
+                        base_image_full_res_for_processing = rotate_image(full_res_base, self.rotation_angle.get())
+                        #print(f"DEBUG: Base image loaded successfully from: {base_img_path_str}")
+                    except Exception as base_load_error:
+                        messagebox.showwarning(
+                            "Aviso de Imagem de Base",
+                            f"Não foi possível carregar a imagem de base '{base_img_path_str}': {base_load_error}. "
+                            "Continuando sem imagem de base para processamento."
+                        )
+                        base_image_full_res_for_processing = None
                 else:
-                    self.current_image_display_cv2 = self.current_image_full_res_cv2.copy()
+                    print(f"DEBUG: Base image path empty or does not exist: '{base_img_path_str}'. No base image for processing.")
+                    base_image_full_res_for_processing = None # Garante que seja None se não houver base válida
 
-                # Send the (potentially cropped) image to the editor frame
-                self.image_editor_frame.set_image(self.current_image_display_cv2)
+                # 3. Prepara a imagem atual para exibição na GUI (recorta se houver crop_coords)
+                # Esta é a imagem que será ajustada pelos sliders no ImageEditorFrame (lado esquerdo)
+                x1, y1, x2, y2 = self.crop_coords
+                
+                # Certifica-se de que a imagem atual (current_image_full_res_for_processing) existe antes de tentar cortar
+                if current_image_full_res_for_processing is not None:
+                    h, w = current_image_full_res_for_processing.shape[:2]
+                    # Clamp the crop coordinates to the image dimensions
+                    safe_x1 = max(0, min(x1, w))
+                    safe_y1 = max(0, min(y1, h))
+                    safe_x2 = max(0, min(x2, w))
+                    safe_y2 = max(0, min(y2, h))
+
+                    # Ensure valid cropping dimensions
+                    if safe_x2 > safe_x1 and safe_y2 > safe_y1:
+                        self.current_image_display_cv2 = current_image_full_res_for_processing[safe_y1:safe_y2, safe_x1:safe_x2].copy()
+                    else:
+                        print("Warning: Invalid crop coordinates, displaying full image.")
+                        self.current_image_display_cv2 = current_image_full_res_for_processing.copy()
+                    
+                    # Prepare base_image_display (for the right side of the editor, if it exists and is used as "base_image_for_display_cv2")
+                    # Here, we're passing the *full-res rotated* base image to `base_image_display`.
+                    # You can adjust this if you want a cropped version of the base image on the right.
+                    # For now, it's consistent with `base_image_full_res_for_processing`.
+                    if safe_x2 > safe_x1 and safe_y2 > safe_y1:
+                        base_image_display = base_image_full_res_for_processing[safe_y1:safe_y2, safe_x1:safe_x2].copy() if base_image_full_res_for_processing is not None else None
+                    else:
+                        base_image_display = base_image_full_res_for_processing.copy() if base_image_full_res_for_processing is not None else None
+
+                else:
+                    print("Error: current_image_full_res_for_processing is None.")
+                    self.current_image_display_cv2 = np.zeros(PREVIEW_THUMBNAIL_SIZE + (3,), dtype=np.uint8) # Fallback blank image
+                    base_image_display = None
+
+                # 4. Envia as imagens para o ImageEditorFrame
+                # adjustable_image_cv2: a imagem para o lado esquerdo (já cropped)
+                # base_image_display_cv2: a imagem para o lado direito (a imagem de base original, ou a atual como fallback)
+                # current_full_res_for_segment: a imagem atual full-res rotacionada (para o segment_drop)
+                # base_full_res_for_segment: a imagem de base full-res rotacionada (para o segment_drop)
+                self.image_editor_frame.set_image(
+                    self.current_image_display_cv2,
+                    base_image_display, # This is the original (or adjusted) full-res base image
+                    current_image_full_res_for_processing,
+                    base_image_full_res_for_processing
+                )
 
             except Exception as e:
-                messagebox.showerror("Erro de Imagem", f"Não foi possível carregar ou rotacionar a imagem: {e}")
-                blank_image = np.zeros((PREVIEW_THUMBNAIL_SIZE[1], PREVIEW_THUMBNAIL_SIZE[0], 3), dtype=np.uint8)
-                self.image_editor_frame.set_image(blank_image)
+                messagebox.showerror("Erro de Carregamento/Processamento", f"Não foi possível carregar ou processar a imagem atual: {e}")
+                # Exibe uma imagem em branco se houver erro ao carregar/processar a imagem atual
+                blank_image = np.zeros(PREVIEW_THUMBNAIL_SIZE + (3,), dtype=np.uint8) # Cria uma imagem em branco colorida
+                self.image_editor_frame.set_image(blank_image, None, None, None) # Passa None para todas as outras
+
         else:
-            blank_image = np.zeros((PREVIEW_THUMBNAIL_SIZE[1], PREVIEW_THUMBNAIL_SIZE[0], 3), dtype=np.uint8)
-            self.image_editor_frame.set_image(blank_image)
+            # Exibe uma imagem em branco se não houver imagens carregadas no folder
+            blank_image = np.zeros(PREVIEW_THUMBNAIL_SIZE + (3,), dtype=np.uint8)
+            self.image_editor_frame.set_image(blank_image, None, None, None) # Passa None para todas as outras
 
     def _start_cropping(self):
         if self.current_image_full_res_cv2 is None:
