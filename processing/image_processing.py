@@ -1,121 +1,75 @@
-# processing/image_processing.py
 import cv2
 import numpy as np
-from config.settings import PX_PER_MM, INITIAL_CONC
-from config.settings import THRESHOLD_VALUE_DIFFERENCE
+import os
+
+from config.settings import THRESHOLD_VALUE_DIFFERENCE, KERNEL_BLUR_SIZE, KERNEL_MORPH_SIZE, VIDEO_FPS, PX_PER_MM, MM3_PER_UL, INITIAL_CONC
+from processing.utils import load_image_cv2, rotate_image, save_frame_to_video # Certifique-se de que save_frame_to_video existe
+from processing.image_adjustments import apply_adjustments_cv2
 
 
 def calculate_image_difference(base_image_cv2, current_image_cv2, crop_coords, debug_plots=False):
     """
-    Calcula a diferença entre a imagem atual e a imagem base, aplicando o corte.
-
+    Calcula a diferença entre duas imagens (já cortadas) e retorna a imagem de diferença
+    e a imagem atual colorida (também já cortada).
     Args:
-        base_image_cv2 (np.array): A imagem base (já rotacionada).
-        current_image_cv2 (np.array): A imagem atual (já rotacionada).
-        crop_coords (list): [x1, y1, x2, y2] coordenadas de corte.
-        debug_plots (bool): Se True, mostra plots para depuração.
-
+        base_image_cv2 (np.array): Imagem de base OpenCV (BGR, já cortada).
+        current_image_cv2 (np.array): Imagem atual OpenCV (BGR, já cortada).
+        crop_coords (list): Coordenadas de corte [x1, y1, x2, y2]. Não é mais usado para cortar,
+                             mas mantido para compatibilidade de assinatura se necessário.
+        debug_plots (bool): Se True, exibe janelas de depuração.
     Returns:
         tuple: (diferenca_raw, cropped_original_color)
-               Retorna (None, None) se o corte for inválido para as imagens.
     """
-    x1, y1, x2, y2 = crop_coords
-
-    # Valide e clamp as coordenadas de corte para ambas as imagens
-    # Assumimos que base_image_cv2 e current_image_cv2 já foram rotacionadas.
-    # Precisamos pegar as dimensões delas INDIVIDUALMENTE para garantir que o corte seja seguro.
-
-    h_base, w_base = base_image_cv2.shape[:2]
-    h_current, w_current = current_image_cv2.shape[:2]
-
-    # Use as coordenadas de corte calculadas pelo usuário.
-    # No entanto, clamp-as aos limites da imagem atual.
-    # O crop_coords já foi validado e ajustado no main_window para a imagem que foi exibida.
-    # Aqui, garantimos que ele não estoure os limites da imagem que está sendo processada.
-    safe_x1 = max(0, x1)
-    safe_y1 = max(0, y1)
-    safe_x2 = min(w_current, x2) # Min com a largura da imagem atual
-    safe_y2 = min(h_current, y2) # Min com a altura da imagem atual
-
-    # Se a área de corte resultante for inválida após o clamping, retorne None
+    # As imagens já devem vir cortadas de `_load_and_display_current_image` na GUI.
+    # No processamento em lote, o corte será feito em `process_images_and_generate_video`.
     
-    #------------TESTE-----------
-    
-    if safe_x2 > safe_x1 and safe_y2 > safe_y1:
-        cropped_base = base_image_cv2[safe_y1:safe_y2, safe_x1:safe_x2]
-        cropped_current = current_image_cv2[safe_y1:safe_y2, safe_x1:safe_x2]
+    # Conversão para escala de cinza das imagens já cortadas
+    gray_base = cv2.cvtColor(base_image_cv2, cv2.COLOR_BGR2GRAY)
+    gray_current = cv2.cvtColor(current_image_cv2, cv2.COLOR_BGR2GRAY)
 
-        cropped_original_color = current_image_cv2[safe_y1:safe_y2, safe_x1:safe_x2].copy() # Cópia para o output
-    
-    else:
-        cropped_base = base_image_cv2
-        cropped_current = current_image_cv2
-        cropped_original_color = current_image_cv2
-    
-    #--------- FIM DO TESTE------
-    
-    # if safe_x2 <= safe_x1 or safe_y2 <= safe_y1:
-    #     print(f"Warning: Calculated crop area [{safe_x1},{safe_y1},{safe_x2},{safe_y2}] is invalid for current image dimensions ({w_current}x{h_current}). Returning dummy mask.")
-    #     return None, None
-
-    # # Aplica o mesmo corte tanto para a imagem base quanto para a imagem atual
-    # cropped_base = base_image_cv2[safe_y1:safe_y2, safe_x1:safe_x2]
-    # cropped_current = current_image_cv2[safe_y1:safe_y2, safe_x1:safe_x2]
-
-    # cropped_original_color = current_image_cv2[safe_y1:safe_y2, safe_x1:safe_x2].copy() # Cópia para o output
-
-    # Converte para escala de cinza para calcular a diferença
-    gray_base = cv2.cvtColor(cropped_base, cv2.COLOR_BGR2GRAY)
-    gray_current = cv2.cvtColor(cropped_current, cv2.COLOR_BGR2GRAY)
-    
     # ------------ CORREÇÃO DE PROBLEMA COM REFLEXOS NA GOTA -------------------
-    # Os reflexos nas gotas causavam problemas na identificação dos contornos. 
-    # O código abaixo corrige isso ao aplicar um thresholding inicial, 
-    # com espessura "thickness=cv2.FILLED, que preenche tudo que está
-    # abaixo com pixels pretos, eliminando os reflexos.
+    # Os reflexos nas gotas causavam problemas na identificação dos contornos.
+    # O código abaixo corrige isso ao aplicar um thresholding inicial,
+    # com espessura "thickness=cv2.FILLED", que preenche tudo
     _, thresholded_base = cv2.threshold(gray_base, THRESHOLD_VALUE_DIFFERENCE, 255, cv2.THRESH_BINARY_INV)
     _, thresholded_current = cv2.threshold(gray_current, THRESHOLD_VALUE_DIFFERENCE, 255, cv2.THRESH_BINARY_INV)
-    contours_base, _ = cv2.findContours(thresholded_base, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    contours_current, _ = cv2.findContours(thresholded_current, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    base_filled = np.ones_like(gray_base) * 255  # fundo branco
-    if contours_base:
-        largest_contour = max(contours_base, key=cv2.contourArea)
-        # Desenhar a gota em preto sobre fundo branco
-        cv2.drawContours(base_filled, [largest_contour], -1, (0,), thickness=cv2.FILLED)
 
-    current_filled = np.ones_like(gray_current) * 255  # fundo branco
+    # Encontrar o maior contorno e preencher
+    base_filled = np.ones_like(gray_base) * 255 # fundo branco
+    contours_base, _ = cv2.findContours(thresholded_base, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if contours_base:
+        largest_contour_base = max(contours_base, key=cv2.contourArea)
+        cv2.drawContours(base_filled, [largest_contour_base], -1, (0,), thickness=cv2.FILLED)
+
+    current_filled = np.ones_like(gray_current) * 255 # fundo branco
+    contours_current, _ = cv2.findContours(thresholded_current, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if contours_current:
-        largest_contour = max(contours_current, key=cv2.contourArea)
-        # Desenhar a gota em preto sobre fundo branco
-        cv2.drawContours(current_filled, [largest_contour], -1, (0,), thickness=cv2.FILLED)
-        
-        
+        largest_contour_current = max(contours_current, key=cv2.contourArea)
+        cv2.drawContours(current_filled, [largest_contour_current], -1, (0,), thickness=cv2.FILLED)
+
     diferenca_raw = cv2.absdiff(current_filled, base_filled)
-        
-    # ------------ FIM DA CORREÇÃO  -------------------
+
+    # ------------ FIM DA CORREÇÃO -------------------
 
     if debug_plots:
         cv2.imshow("Difference Raw (Cropped)", diferenca_raw)
         # cv2.waitKey(1) # Small wait to allow window to render
 
-    return diferenca_raw, cropped_original_color
+    # Retorna a imagem de diferença e a imagem atual colorida (já cortada)
+    return diferenca_raw, current_image_cv2 # current_image_cv2 já é a cropped_original_color neste contexto
 
 
 def process_difference_image(diferenca_raw, threshold_value_difference, kernel_blur_size, kernel_morph_size, debug_plots=False):
     """
-    Processa a imagem de diferença para obter a máscara da gota e seu contorno de proeminência.
-
+    Processa a imagem de diferença para obter uma máscara binária e o contorno da proeminência.
     Args:
         diferenca_raw (np.array): Imagem de diferença em escala de cinza.
         threshold_value_difference (int): Valor de limiar para binarização.
-        kernel_blur_size (tuple): Tamanho do kernel para desfoque Gaussiano (e.g., (5,5)).
-        kernel_morph_size (int): Tamanho do kernel para operações morfológicas (e.g., 3).
-        debug_plots (bool): Se True, mostra plots para depuração.
-
+        kernel_blur_size (tuple): Tamanho do kernel para o desfoque Gaussiano.
+        kernel_morph_size (int): Tamanho do kernel para operações morfológicas.
+        debug_plots (bool): Se True, exibe janelas de depuração.
     Returns:
         tuple: (mask_full, prominence_contour)
-               Retorna (None, None) se nenhum contorno proeminente for encontrado.
     """
     # Desfoque Gaussiano
     blurred_diff = cv2.GaussianBlur(diferenca_raw, kernel_blur_size, 0)
@@ -123,62 +77,55 @@ def process_difference_image(diferenca_raw, threshold_value_difference, kernel_b
     # Binarização
     _, thresh_diff = cv2.threshold(blurred_diff, threshold_value_difference, 255, cv2.THRESH_BINARY)
 
-    # Operações Morfológicas (Open e Close)
     kernel = np.ones((kernel_morph_size, kernel_morph_size), np.uint8)
     mask_open = cv2.morphologyEx(thresh_diff, cv2.MORPH_OPEN, kernel)
     mask_full = cv2.morphologyEx(mask_open, cv2.MORPH_CLOSE, kernel)
 
-    # Encontrar contornos
     contours, _ = cv2.findContours(mask_full, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     prominence_contour = None
     if contours:
-        # Encontrar o maior contorno (assumindo que seja a gota mais proeminente)
+        # Encontrar o maior contorno por área
         prominence_contour = max(contours, key=cv2.contourArea)
 
     if debug_plots:
         cv2.imshow("Processed Mask", mask_full)
-        # cv2.waitKey(1)
 
     return mask_full, prominence_contour
 
 
-def segment_drop(current_image_cv2, base_image_cv2, crop_coords,
+def segment_drop(current_image_cropped, base_image_cropped, crop_coords,
                  threshold_value_difference=25, kernel_blur_size=(5, 5), kernel_morph_size=5, debug_plots=False):
     """
-    Segmenta a gota da imagem usando subtração de fundo e processamento morfológico.
-
+    Segmenta a gota na imagem atual usando a imagem de base para diferença.
     Args:
-        current_image_cv2 (np.array): Imagem atual (já rotacionada).
-        base_image_cv2 (np.array): Imagem base (já rotacionada).
-        crop_coords (list): [x1, y1, x2, y2] coordenadas de corte.
-        threshold_value_difference (int): Limiar para a binarização da diferença.
-        kernel_blur_size (tuple): Tamanho do kernel para o desfoque.
-        kernel_morph_size (int): Tamanho do kernel para as operações morfológicas.
-        debug_plots (bool): Se True, mostra plots para depuração.
-
+        current_image_cropped (np.array): Imagem atual (já cortada) OpenCV (BGR).
+        base_image_cropped (np.array): Imagem de base (já cortada) OpenCV (BGR).
+        crop_coords (list): Coordenadas de corte [x1, y1, x2, y2]. Não é mais usado para cortar.
+        threshold_value_difference (int): Limiar para a binarização da imagem de diferença.
+        kernel_blur_size (tuple): Tamanho do kernel para desfoque.
+        kernel_morph_size (int): Tamanho do kernel para morfologia.
+        debug_plots (bool): Se True, exibe janelas de depuração.
     Returns:
-        tuple: (mask_full, prominence_contour, cropped_current_color)
-               Retorna dummy_mask/None/dummy_cropped_color se a gota "desaparecer" ou corte inválido.
+        tuple: (mask_full, prominence_contour, processed_image_display)
     """
-    diferenca_raw, cropped_current_color = calculate_image_difference(base_image_cv2, current_image_cv2, crop_coords, debug_plots)
+    if current_image_cropped is None or base_image_cropped is None:
+        # Retornar máscaras e imagens em branco se alguma imagem for None
+        dummy_mask = np.zeros((100, 100), dtype=np.uint8) # Tamanho dummy
+        dummy_color = np.zeros((100, 100, 3), dtype=np.uint8)
+        return dummy_mask, None, dummy_color
 
-    # If the droplet disappears or difference calculation failed due to invalid crop
-    if diferenca_raw is None or cropped_current_color is None:
-        # Get dimensions for dummy mask from crop_coords to match expected size
-        x1, y1, x2, y2 = crop_coords
-        dummy_mask_height = max(1, y2 - y1)
-        dummy_mask_width = max(1, x2 - x1)
-        
-        dummy_mask = np.zeros((dummy_mask_height, dummy_mask_width), dtype=np.uint8)
-        dummy_cropped_color = np.zeros((dummy_mask_height, dummy_mask_width, 3), dtype=np.uint8)
-        return dummy_mask, None, dummy_cropped_color
+    # Chama calculate_image_difference com as imagens já cortadas
+    diferenca_raw, processed_image_display = calculate_image_difference(
+        base_image_cropped, current_image_cropped, crop_coords, debug_plots
+    )
 
+    # Processa a imagem de diferença para obter a máscara e o contorno
     mask_full, prominence_contour = process_difference_image(
         diferenca_raw, threshold_value_difference, kernel_blur_size, kernel_morph_size, debug_plots
     )
-    
-    return mask_full, prominence_contour, cropped_current_color
+
+    return mask_full, prominence_contour, processed_image_display
 
 
 def calculate_measurements(mask_prominence_full, prominence_contour, px_per_mm, mm3_per_ul, initial_volume=None):
@@ -293,3 +240,147 @@ def calculate_measurements(mask_prominence_full, prominence_contour, px_per_mm, 
             
 
     return measurements
+
+
+def process_images_and_generate_video(image_paths, base_image_full_res_uncropped, rotation_angle, crop_coords,
+                                      output_video_path, output_csv_path,
+                                      brightness, exposure, contrast, highlights, shadows):
+    """
+    Processa uma série de imagens para análise de gotas e gera um vídeo de saída.
+    Args:
+        image_paths (list): Lista de caminhos para as imagens a serem processadas.
+        base_image_full_res_uncropped (np.array): Imagem de base full-res, já rotacionada.
+        rotation_angle (float): Ângulo de rotação aplicado.
+        crop_coords (list): Coordenadas de corte [x1, y1, x2, y2].
+        output_video_path (str): Caminho para salvar o vídeo de saída.
+        output_csv_path (str): Caminho para salvar o arquivo CSV de medições.
+        brightness (float): Ajuste de brilho.
+        exposure (float): Ajuste de exposição.
+        contrast (float): Ajuste de contraste.
+        highlights (float): Ajuste de realces.
+        shadows (float): Ajuste de sombras.
+    """
+    all_measurements = []
+    video_frames = []
+
+    # Obter as coordenadas de corte seguras
+    x1, y1, x2, y2 = crop_coords
+    
+    # Pre-corta e ajusta a imagem de base uma vez
+    base_image_cropped_for_processing = None
+    if base_image_full_res_uncropped is not None:
+        h_base, w_base = base_image_full_res_uncropped.shape[:2]
+        safe_x1 = max(0, min(x1, w_base))
+        safe_y1 = max(0, min(y1, h_base))
+        safe_x2 = max(0, min(x2, w_base))
+        safe_y2 = max(0, min(y2, h_base))
+
+        if safe_x2 > safe_x1 and safe_y2 > safe_y1:
+            base_image_cropped_raw = base_image_full_res_uncropped[safe_y1:safe_y2, safe_x1:safe_x2].copy()
+        else:
+            base_image_cropped_raw = base_image_full_res_uncropped.copy()
+        
+        base_image_cropped_for_processing = apply_adjustments_cv2(
+            base_image_cropped_raw, brightness, exposure, contrast, highlights, shadows
+        )
+        
+
+    for i, img_path in enumerate(image_paths):
+        print(f"Processing image {i+1}/{len(image_paths)}: {os.path.basename(img_path)}")
+
+        try:
+            current_image_full_res = load_image_cv2(img_path)
+            current_image_full_res_rotated = rotate_image(current_image_full_res, rotation_angle)
+
+            # Aplica o mesmo corte à imagem atual
+            h_curr, w_curr = current_image_full_res_rotated.shape[:2]
+            safe_x1_curr = max(0, min(x1, w_curr))
+            safe_y1_curr = max(0, min(y1, h_curr))
+            safe_x2_curr = max(0, min(x2, w_curr))
+            safe_y2_curr = min(h_curr, y2) # Use h_curr, w_curr directly for clipping max
+
+            if safe_x2_curr > safe_x1_curr and safe_y2_curr > safe_y1_curr:
+                current_image_cropped_raw = current_image_full_res_rotated[safe_y1_curr:safe_y2_curr, safe_x1_curr:safe_x2_curr].copy()
+            else:
+                current_image_cropped_raw = current_image_full_res_rotated.copy()
+
+            # Aplica os ajustes à imagem atual JÁ CORTADA
+            current_image_cropped_adjusted = apply_adjustments_cv2(
+                current_image_cropped_raw, brightness, exposure, contrast, highlights, shadows
+            )
+
+            # Agora, `segment_drop` recebe as imagens já cortadas e ajustadas
+            mask, contour, processed_display_image = segment_drop(
+                current_image_cropped_adjusted,
+                base_image_cropped_for_processing, # Usa a base já ajustada
+                crop_coords, # crop_coords é ignorado dentro de segment_drop para corte, mas mantido na assinatura
+                THRESHOLD_VALUE_DIFFERENCE, KERNEL_BLUR_SIZE, KERNEL_MORPH_SIZE
+            )
+
+            if i == 0:
+                measurements = calculate_measurements(mask, contour, PX_PER_MM, MM3_PER_UL)
+                initial_volume = measurements["volume_uL"]
+            else:
+                measurements = calculate_measurements(mask, contour, PX_PER_MM, MM3_PER_UL, initial_volume)
+
+            all_measurements.append(measurements)
+            
+            # Prepare frame for video: Draw contour on processed_display_image
+            if processed_display_image is not None and contour is not None and len(contour) > 0:
+                cv2.drawContours(processed_display_image, [contour], -1, (0, 255, 0), 2) # Green contour
+                
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 0.6
+            font_thickness = 1
+            text_color = (0, 0, 0)
+
+            cv2.putText(processed_display_image, f'Area: {measurements["surface_area_air_mm2"]:.2f} mm^2', (5, 20),
+                        font, font_scale, text_color, font_thickness, cv2.LINE_AA)
+            cv2.putText(processed_display_image, f'Volume: {measurements["volume_uL"]:.2f} uL', (5, 40),
+                        font, font_scale, text_color, font_thickness, cv2.LINE_AA)
+            cv2.putText(processed_display_image, f'Base Length: {measurements["base_length_mm"]:.2f} mm', (5, 60),
+                        font, font_scale, text_color, font_thickness, cv2.LINE_AA)
+            cv2.putText(processed_display_image, f'Height: {measurements["height_mm"]:.2f} mm', (5, 80),
+                        font, font_scale, text_color, font_thickness, cv2.LINE_AA)
+            cv2.putText(processed_display_image, f'Form factor: {measurements["form_factor"]:.2f}', (5, 100),
+                        font, font_scale, text_color, font_thickness, cv2.LINE_AA)
+            cv2.putText(processed_display_image, f'Concentration: {measurements["concentration"]:.2f}%', (5, 120),
+                        font, font_scale, text_color, font_thickness, cv2.LINE_AA)
+
+            # Redimensionar para o vídeo se necessário (se não for a resolução desejada)
+            # ou simplesmente garantir que as dimensões sejam consistentes
+            if processed_display_image is not None:
+                video_frames.append(processed_display_image)
+            else:
+                # Add a blank frame if processing failed for some reason
+                blank_frame_dims = (crop_coords[3] - crop_coords[1], crop_coords[2] - crop_coords[0], 3)
+                if blank_frame_dims[0] <=0 or blank_frame_dims[1] <=0: # Fallback for invalid crop
+                     blank_frame_dims = (600, 800, 3) # Default size if crop is invalid
+                video_frames.append(np.zeros(blank_frame_dims, dtype=np.uint8))
+
+
+        except Exception as e:
+            print(f"Error processing {os.path.basename(img_path)}: {e}")
+            # Add a blank frame or original image if processing fails
+            blank_frame_dims = (crop_coords[3] - crop_coords[1], crop_coords[2] - crop_coords[0], 3)
+            if blank_frame_dims[0] <=0 or blank_frame_dims[1] <=0: # Fallback for invalid crop
+                blank_frame_dims = (600, 800, 3) # Default size if crop is invalid
+            video_frames.append(np.zeros(blank_frame_dims, dtype=np.uint8))
+            all_measurements.append({
+                'image_name': os.path.basename(img_path),
+                'area_mm2': 0.0, 'volume_ul': 0.0, 'perimeter_mm': 0.0, 'circularity': 0.0
+            })
+
+    # Save measurements to CSV
+    if all_measurements:
+        import pandas as pd # Ensure pandas is imported
+        df = pd.DataFrame(all_measurements)
+        df.to_csv(output_csv_path, index=False)
+        print(f"Measurements saved to {output_csv_path}")
+
+    # Save video
+    if video_frames:
+        save_frame_to_video(video_frames, output_video_path, fps=VIDEO_FPS)
+        print(f"Video saved to {output_video_path}")
+    else:
+        print("No frames to save for the video.")
