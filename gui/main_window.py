@@ -47,10 +47,6 @@ class DropletAnalyzerApp(tk.Tk):
                                             label="Imagem Atual", command=self._on_image_index_change)
         self.image_index_slider.grid(row=0, column=0, sticky='ew', padx=5, pady=5)
 
-        # Pass the crop_coords directly as reference
-        self.image_editor_frame = ImageEditorFrame(left_panel, self.crop_coords)
-        self.image_editor_frame.grid(row=1, column=0, sticky='nsew', pady=10)
-
         right_panel = ttk.Frame(self, padding="10")
         right_panel.grid(row=0, column=1, sticky="nsew")
         right_panel.columnconfigure(0, weight=1)
@@ -75,6 +71,18 @@ class DropletAnalyzerApp(tk.Tk):
         ttk.Button(right_panel, text="Definir Corte (na imagem visualizada)", command=self._start_cropping).pack(fill='x', padx=5, pady=2)
 
         ttk.Button(right_panel, text="Processar e Gerar Vídeo", command=self._start_processing).pack(pady=20, fill='x')
+        
+        self.my_selector_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(right_panel, 
+                    text="Show processed image", 
+                    variable=self.my_selector_var, 
+                    command=self._on_selector_toggle).pack(pady=5, padx=2, anchor='w')
+        
+        self.image_editor_frame = ImageEditorFrame(left_panel, self.crop_coords, my_selector_var_param=self.my_selector_var)
+        
+        
+        # Pass the crop_coords directly as reference
+        self.image_editor_frame.grid(row=1, column=0, sticky='nsew', pady=10)
 
     def _setup_layout(self):
         self.grid_rowconfigure(0, weight=1)
@@ -135,6 +143,12 @@ class DropletAnalyzerApp(tk.Tk):
                 )
         else:
             print(f"DEBUG: Base image path empty or does not exist: '{base_img_path_str}'. No base image for processing.")
+            
+    # Dentro da classe DropletAnalyzerApp
+
+    def _on_selector_toggle(self):
+        # Este método é chamado sempre que o Checkbutton é clicado.
+        self._load_and_display_current_image()
 
 
     def _load_and_display_current_image(self):

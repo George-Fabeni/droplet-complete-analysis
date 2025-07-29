@@ -6,6 +6,39 @@ from config.settings import THRESHOLD_VALUE_DIFFERENCE, KERNEL_BLUR_SIZE, KERNEL
 from processing.utils import load_image_cv2, rotate_image, save_frame_to_video # Certifique-se de que save_frame_to_video existe
 from processing.image_adjustments import apply_adjustments_cv2
 
+def segment_drop(current_image_cropped, base_image_cropped, crop_coords,
+                 threshold_value_difference=25, kernel_blur_size=(5, 5), kernel_morph_size=5, debug_plots=False):
+    """
+    Segmenta a gota na imagem atual usando a imagem de base para diferença.
+    Args:
+        current_image_cropped (np.array): Imagem atual (já cortada) OpenCV (BGR).
+        base_image_cropped (np.array): Imagem de base (já cortada) OpenCV (BGR).
+        crop_coords (list): Coordenadas de corte [x1, y1, x2, y2]. Não é mais usado para cortar.
+        threshold_value_difference (int): Limiar para a binarização da imagem de diferença.
+        kernel_blur_size (tuple): Tamanho do kernel para desfoque.
+        kernel_morph_size (int): Tamanho do kernel para morfologia.
+        debug_plots (bool): Se True, exibe janelas de depuração.
+    Returns:
+        tuple: (mask_full, prominence_contour, processed_image_display)
+    """
+    if current_image_cropped is None or base_image_cropped is None:
+        # Retornar máscaras e imagens em branco se alguma imagem for None
+        dummy_mask = np.zeros((100, 100), dtype=np.uint8) # Tamanho dummy
+        dummy_color = np.zeros((100, 100, 3), dtype=np.uint8)
+        return dummy_mask, None, dummy_color
+
+    # Chama calculate_image_difference com as imagens já cortadas
+    diferenca_raw, processed_image_display = calculate_image_difference(
+        base_image_cropped, current_image_cropped, crop_coords, debug_plots
+    )
+
+    # Processa a imagem de diferença para obter a máscara e o contorno
+    mask_full, prominence_contour = process_difference_image(
+        diferenca_raw, threshold_value_difference, kernel_blur_size, kernel_morph_size, debug_plots
+    )
+
+    return mask_full, prominence_contour, processed_image_display
+
 
 def calculate_image_difference(base_image_cv2, current_image_cv2, crop_coords, debug_plots=False):
     """
@@ -93,39 +126,6 @@ def process_difference_image(diferenca_raw, threshold_value_difference, kernel_b
 
     return mask_full, prominence_contour
 
-
-def segment_drop(current_image_cropped, base_image_cropped, crop_coords,
-                 threshold_value_difference=25, kernel_blur_size=(5, 5), kernel_morph_size=5, debug_plots=False):
-    """
-    Segmenta a gota na imagem atual usando a imagem de base para diferença.
-    Args:
-        current_image_cropped (np.array): Imagem atual (já cortada) OpenCV (BGR).
-        base_image_cropped (np.array): Imagem de base (já cortada) OpenCV (BGR).
-        crop_coords (list): Coordenadas de corte [x1, y1, x2, y2]. Não é mais usado para cortar.
-        threshold_value_difference (int): Limiar para a binarização da imagem de diferença.
-        kernel_blur_size (tuple): Tamanho do kernel para desfoque.
-        kernel_morph_size (int): Tamanho do kernel para morfologia.
-        debug_plots (bool): Se True, exibe janelas de depuração.
-    Returns:
-        tuple: (mask_full, prominence_contour, processed_image_display)
-    """
-    if current_image_cropped is None or base_image_cropped is None:
-        # Retornar máscaras e imagens em branco se alguma imagem for None
-        dummy_mask = np.zeros((100, 100), dtype=np.uint8) # Tamanho dummy
-        dummy_color = np.zeros((100, 100, 3), dtype=np.uint8)
-        return dummy_mask, None, dummy_color
-
-    # Chama calculate_image_difference com as imagens já cortadas
-    diferenca_raw, processed_image_display = calculate_image_difference(
-        base_image_cropped, current_image_cropped, crop_coords, debug_plots
-    )
-
-    # Processa a imagem de diferença para obter a máscara e o contorno
-    mask_full, prominence_contour = process_difference_image(
-        diferenca_raw, threshold_value_difference, kernel_blur_size, kernel_morph_size, debug_plots
-    )
-
-    return mask_full, prominence_contour, processed_image_display
 
 
 def calculate_measurements(mask_prominence_full, prominence_contour, px_per_mm, mm3_per_ul, initial_volume=None):

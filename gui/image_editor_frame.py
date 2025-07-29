@@ -10,10 +10,11 @@ from config.settings import DEFAULT_BRIGHTNESS, DEFAULT_EXPOSURE, DEFAULT_CONTRA
                             PREVIEW_THUMBNAIL_SIZE, THRESHOLD_VALUE_DIFFERENCE, KERNEL_BLUR_SIZE, KERNEL_MORPH_SIZE # Import all necessary settings
 
 class ImageEditorFrame(ttk.Frame):
-    def __init__(self, parent, crop_coords_ref, *args, **kwargs):
+    def __init__(self, parent, crop_coords_ref, my_selector_var_param, *args, **kwargs):
         super().__init__(parent, *args, **kwargs)
         self.parent = parent
         self.crop_coords_ref = crop_coords_ref # Referência para as coordenadas de corte da janela principal
+        self.my_selector_var = my_selector_var_param
 
         # Estas imagens já virão CORTADAS da main_window
         self.current_image_to_adjust_cv2 = None
@@ -114,7 +115,7 @@ class ImageEditorFrame(ttk.Frame):
 
         # --- Logic for the SECOND (PROCESSED) image (right side) ---
         # Garantir que ambas as imagens (atual e base) estejam disponíveis e cortadas
-        if self.current_image_to_adjust_cv2 is not None and self.base_image_for_display_cv2 is not None:
+        if self.current_image_to_adjust_cv2 is not None and self.base_image_for_display_cv2 is not None and self.my_selector_var.get():
             # Aplica ajustes à imagem atual e de base (ambas já cortadas) antes de enviar para segment_drop
             adjusted_current_for_segment = apply_adjustments_cv2(
                 self.current_image_to_adjust_cv2, brightness, exposure, contrast, highlights, shadows
