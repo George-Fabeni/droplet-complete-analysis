@@ -14,29 +14,32 @@ def apply_adjustments_cv2(img_bgr, brightness_factor, exposure_factor, contrast_
         shadows_factor (float): Multiplicative factor for pixels < 128.
 
     """
-    
-    # Conversão para float32 apenas uma vez
+
     img = img_bgr.astype(np.float32)
     
-    # Ajuste de brilho e exposição (fatores multiplicativos combinados)
-    img *= brightness_factor * exposure_factor
+    # 1. Exposure (Multiplicativo)
+    # Equação: $$I_{new} = I \times \text{exposure\_factor}$$
+    img *= exposure_factor
     
-    # Ajuste de contraste em torno da média
+    # 2. Brightness (Aditivo)
+    # Equação: $$I_{new} = I + (100 \times \text{brightness\_factor} - 100)$$
+    img += (100 * brightness_factor - 100)
+    
+    # 3. Contrast (Linear em torno da média)
+    # Centralizamos na média para que o contraste não desloque o brilho geral
     mean = np.mean(img, axis=(0, 1), keepdims=True)
     img = (img - mean) * contrast_factor + mean
+
+    # 4. Shadows & Highlights
+    # Criamos a máscara baseada na luminância (Y) ou média simples
+    # Usamos a imagem original ou a atual para definir o que é "sombra" ( < 128 )
+    gray = cv2.cvtColor(np.clip(img, 0, 255).astype(np.uint8), cv2.COLOR_BGR2GRAY)
+    shadows_mask = (gray < 128)[..., None] # Adiciona dimensão para broadcasting
+    highlights_mask = ~shadows_mask
     
-    # Converte temporariamente para escala de cinza para gerar as máscaras
-    gray = cv2.cvtColor(img.astype(np.uint8), cv2.COLOR_BGR2GRAY)
+    # Aplicamos os fatores separadamente
+    img = np.where(shadows_mask, img * shadows_factor, img)
+    img = np.where(highlights_mask, img * highlights_factor, img)
     
-    # Máscaras para sombras e luzes
-    shadows_mask = gray < 128
-    highlights_mask = ~shadows_mask  # mais rápido que gray >= 128
-    
-    # Aplicação direta nos canais RGB usando máscaras booleanas
-    for c in range(3):  # B, G, R
-        img[..., c][shadows_mask] *= shadows_factor
-        img[..., c][highlights_mask] *= highlights_factor
-    
-    # Clipping final e conversão para uint8
     return np.clip(img, 0, 255).astype(np.uint8)
 

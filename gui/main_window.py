@@ -3,26 +3,28 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import cv2
 import numpy as np
-import threading # Ensure this is imported
+import threading
+import pandas as pd
+from pathlib import Path
 
 from processing.utils import load_image_cv2, get_image_paths_from_folder, load_image_from_dialog, rotate_image
-from gui.image_editor_frame import ImageEditorFrame # Import ImageEditorFrame
-from config.settings import DEFAULT_IMAGE_FOLDER, DEFAULT_OUTPUT_FOLDER, PREVIEW_THUMBNAIL_SIZE # Ensure PREVIEW_THUMBNAIL_SIZE is imported
+from gui.image_editor_frame import ImageEditorFrame 
+from config.settings import DEFAULT_IMAGE_FOLDER, DEFAULT_OUTPUT_FOLDER, PREVIEW_THUMBNAIL_SIZE 
 
 class DropletAnalyzerApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Analisador de Gotas")
+        self.title("Droplet analyzer")
         self.geometry("1200x800")
 
         self.image_paths = []
         self.current_image_index = -1
-        # self.current_image_full_res_cv2 = None # Não é mais necessário armazenar aqui
         self.current_image_display_cv2 = None # The image actually displayed in the GUI (cropped & resized)
+        self.balance_file = None
 
-        self.base_image_path_var = tk.StringVar() # Usar StringVar para o caminho da imagem de base
+        self.base_image_path_var = tk.StringVar() # Base image path
         self.rotation_angle = tk.DoubleVar(value=0.0)
-        self.crop_coords = [0, 0, 0, 0] # [x1, y1, x2, y2]
+        self.crop_coords = [0, 0, 0, 0]
         self.cropping_active = False
         self.start_x, self.start_y = -1, -1
         self.temp_crop_display_scaled = None # For faster drawing during cropping
@@ -44,35 +46,40 @@ class DropletAnalyzerApp(tk.Tk):
         left_panel.rowconfigure(1, weight=1) # ImageEditorFrame row
 
         self.image_index_slider = tk.Scale(left_panel, from_=0, to=0, orient=tk.HORIZONTAL,
-                                            label="Imagem Atual", command=self._on_image_index_change)
+                                            label="Current Image", command=self._on_image_index_change)
         self.image_index_slider.grid(row=0, column=0, sticky='ew', padx=5, pady=5)
 
         right_panel = ttk.Frame(self, padding="10")
         right_panel.grid(row=0, column=1, sticky="nsew")
         right_panel.columnconfigure(0, weight=1)
 
-        ttk.Label(right_panel, text="Pasta de Imagens:").pack(pady=5)
+        ttk.Label(right_panel, text="Image file:").pack(pady=5)
         self.image_folder_path_var = tk.StringVar(value=DEFAULT_IMAGE_FOLDER)
-        ttk.Entry(right_panel, textvariable=self.image_folder_path_var, width=50).pack(fill='x', padx=5, pady=2)
-        ttk.Button(right_panel, text="Selecionar Pasta", command=self._select_image_folder).pack(fill='x', padx=5, pady=2)
+        ttk.Entry(right_panel, textvariable=self.image_folder_path_var, width=50).pack(fill='x', padx=5, pady=0)
+        ttk.Button(right_panel, text="Select file", command=self._select_image_folder).pack(fill='x', padx=5, pady=2)
 
-        ttk.Label(right_panel, text="Imagem de Base:").pack(pady=5)
+        ttk.Label(right_panel, text="Base image:").pack(pady=20)
         self.base_image_path_var = tk.StringVar()
-        ttk.Entry(right_panel, textvariable=self.base_image_path_var, width=50).pack(fill='x', padx=5, pady=2)
-        ttk.Button(right_panel, text="Selecionar Imagem de Base", command=self._select_base_image).pack(fill='x', padx=5, pady=2)
-
-        ttk.Label(right_panel, text="Ângulo de Rotação (°):").pack(pady=5)
-        ttk.Entry(right_panel, textvariable=self.rotation_angle, width=10).pack(fill='x', padx=5, pady=2)
-        self.rotation_angle.trace_add("write", self._on_rotation_angle_change) # Add trace to update image on angle change
-
-        ttk.Label(right_panel, text="Coordenadas de Corte (X1,Y1,X2,Y2):").pack(pady=5)
-        self.crop_coords_var = tk.StringVar(value="0,0,0,0")
-        ttk.Entry(right_panel, textvariable=self.crop_coords_var, width=30).pack(fill='x', padx=5, pady=2)
-        ttk.Button(right_panel, text="Definir Corte (na imagem visualizada)", command=self._start_cropping).pack(fill='x', padx=5, pady=2)
-
-        ttk.Button(right_panel, text="Processar e Gerar Vídeo", command=self._start_processing).pack(pady=20, fill='x')
+        ttk.Entry(right_panel, textvariable=self.base_image_path_var, width=50).pack(fill='x', padx=5, pady=0)
+        ttk.Button(right_panel, text="Select base image", command=self._select_base_image).pack(fill='x', padx=5, pady=2)
         
-        self.my_selector_var = tk.BooleanVar(value=False)
+        ttk.Label(right_panel, text="Balance data file").pack(pady=20)
+        self.balance_file = tk.StringVar(master=self)
+        ttk.Entry(right_panel, textvariable=self.balance_file, width=50).pack(fill='x', padx=5, pady=0)
+        ttk.Button(right_panel, text="Select balance data file", command=self._select_balance_file).pack(fill='x', padx=5, pady=2)
+
+        # ttk.Label(right_panel, text="Rotation angle (°):").pack(pady=5)
+        # ttk.Entry(right_panel, textvariable=self.rotation_angle, width=10).pack(fill='x', padx=5, pady=2)
+        # self.rotation_angle.trace_add("write", self._on_rotation_angle_change) # Add trace to update image on angle change
+
+        ttk.Label(right_panel, text="Crop coords (X1,Y1,X2,Y2):").pack(pady=20)
+        self.crop_coords_var = tk.StringVar(value="0,0,0,0")
+        ttk.Entry(right_panel, textvariable=self.crop_coords_var, width=30).pack(fill='x', padx=5, pady=0)
+        ttk.Button(right_panel, text="Define the crop", command=self._start_cropping).pack(fill='x', padx=5, pady=2)
+
+        ttk.Button(right_panel, text="Process and generate video", command=self._start_processing).pack(pady=20, fill='x')
+        
+        self.my_selector_var = tk.BooleanVar(master=self, value=False)
         ttk.Checkbutton(right_panel, 
                     text="Show processed image", 
                     variable=self.my_selector_var, 
@@ -90,7 +97,13 @@ class DropletAnalyzerApp(tk.Tk):
         self.grid_columnconfigure(1, weight=0) # Right panel should not expand horizontally
 
     def load_images_from_folder(self, folder_path):
-        self.image_paths = get_image_paths_from_folder(folder_path)
+        
+        # -------- New way of taking the file path -------
+        folder_path = Path(folder_path)
+        self.image_paths = [str(p) for p in folder_path.glob('**/*') if p.suffix.lower() in ['.jpg', '.jpeg', '.png', '.gif', '.tif', '.tiff']]
+        # -------- New way of taking the file path -------
+        
+        #self.image_paths = get_image_paths_from_folder(folder_path) #Old way of taking the filepath
         if self.image_paths:
             self.image_index_slider.config(to=len(self.image_paths) - 1)
             self.current_image_index = 0
@@ -100,31 +113,46 @@ class DropletAnalyzerApp(tk.Tk):
             self.image_index_slider.config(to=0)
             self.current_image_index = -1
             self.image_index_slider.set(0)
-            self.image_editor_frame.set_image(None, None, None, None) # Clear images
+            self.image_editor_frame.set_image(None, None) # Clear images
 
     def _select_image_folder(self):
         folder_selected = filedialog.askdirectory(initialdir=self.image_folder_path_var.get())
+        print("Folder selected: ", folder_selected)
+        
         if folder_selected:
+
+            #folder_selected = os.path.normpath(folder_selected) #Old way of taking filepath
             self.image_folder_path_var.set(folder_selected)
             self.load_images_from_folder(folder_selected)
+            
 
     def _select_base_image(self):
         filepath = load_image_from_dialog()
+        print("DEBUG Base image selected: ", filepath)
         if filepath:
             self.base_image_path_var.set(filepath)
             # Ao selecionar nova imagem de base, recarregar apenas ela e redesenhar tudo
             self._load_base_image_only()
             self._load_and_display_current_image() # Força atualização da GUI
+            
+    def _select_balance_file(self):
+ 
+        file_path = filedialog.askopenfilename(
+            title="Select the CSV file",
+            filetypes=[("Arquivos CSV", "*.csv")]
+        )
+        if file_path:
+            self.balance_file.set(file_path)
 
     def _on_image_index_change(self, val):
         self.current_image_index = int(val)
         self._load_and_display_current_image()
 
-    def _on_rotation_angle_change(self, *args):
-        """Called when rotation angle changes, reloads and displays the image."""
-        # Recarregar ambas as imagens (atual e base) com o novo ângulo de rotação
-        self._load_base_image_only() # Recarrega a base com novo ângulo
-        self._load_and_display_current_image() # Recarrega a atual com novo ângulo e redesenha
+    # def _on_rotation_angle_change(self, *args):
+    #     """Called when rotation angle changes, reloads and displays the image."""
+    #     # Recarregar ambas as imagens (atual e base) com o novo ângulo de rotação
+    #     self._load_base_image_only() # Recarrega a base com novo ângulo
+    #     self._load_and_display_current_image() # Recarrega a atual com novo ângulo e redesenha
 
     def _load_base_image_only(self):
         """Carrega e rotaciona apenas a imagem de base, armazenando-a em full-res."""
@@ -134,7 +162,7 @@ class DropletAnalyzerApp(tk.Tk):
             try:
                 full_res_base = load_image_cv2(base_img_path_str)
                 self.base_image_full_res_uncropped = rotate_image(full_res_base, self.rotation_angle.get())
-                print(f"DEBUG: Base image reloaded (full-res, uncropped) for rotation angle change.")
+                print("DEBUG: Base image reloaded (full-res, uncropped) for rotation angle change.")
             except Exception as base_load_error:
                 messagebox.showwarning(
                     "Aviso de Imagem de Base",
@@ -148,6 +176,7 @@ class DropletAnalyzerApp(tk.Tk):
 
     def _on_selector_toggle(self):
         # Este método é chamado sempre que o Checkbutton é clicado.
+        print("DEBUG: condição do seletor: ", self.my_selector_var.get())
         self._load_and_display_current_image()
 
 
@@ -195,7 +224,7 @@ class DropletAnalyzerApp(tk.Tk):
                         else:
                             base_image_cropped_for_display = None
                     else:
-                        print("Warning: Invalid crop coordinates, displaying full image and base image (if available).")
+                        #print("Warning: Invalid crop coordinates, displaying full image and base image (if available).")
                         self.current_image_display_cv2 = current_image_full_res_rotated.copy()
                         base_image_cropped_for_display = self.base_image_full_res_uncropped.copy() if self.base_image_full_res_uncropped is not None else None
 
@@ -205,30 +234,26 @@ class DropletAnalyzerApp(tk.Tk):
                     base_image_cropped_for_display = None
 
 
-                # 3. Envia as imagens cortadas para o ImageEditorFrame
-                # A partir de agora, ImageEditorFrame e segment_drop trabalham com imagens JÁ CORTADAS.
+                # 3. Send cropped images to ImageEditorFrame
+                # From now on, ImageEditorFrame and segment_drop deals with cropped images.
                 self.image_editor_frame.set_image(
-                    self.current_image_display_cv2,            # Imagem atual CORTADA para o lado esquerdo
-                    base_image_cropped_for_display,             # Imagem de base CORTADA para o lado direito
-                    # Passamos None para os argumentos full_res porque o corte já foi feito
-                    # e segment_drop vai receber as imagens já cortadas.
-                    #None, # current_full_res_for_segment (não mais usado para segment_drop)
-                    #None  # base_full_res_for_segment (não mais usado para segment_drop)
+                    self.current_image_display_cv2,          
+                    base_image_cropped_for_display,         
                 )
 
             except Exception as e:
                 messagebox.showerror("Erro de Carregamento/Processamento", f"Não foi possível carregar ou processar a imagem atual: {e}")
-                # Exibe uma imagem em branco se houver erro ao carregar/processar a imagem atual
-                blank_image = np.zeros(PREVIEW_THUMBNAIL_SIZE + (3,), dtype=np.uint8) # Cria uma imagem em branco colorida
-                self.image_editor_frame.set_image(blank_image, None, None, None) # Passa None para todas as outras
+                # Exhibits a blank image in case of error
+                blank_image = np.zeros(PREVIEW_THUMBNAIL_SIZE + (3,), dtype=np.uint8) 
+                self.image_editor_frame.set_image(blank_image, None) 
 
         else:
-            # Exibe uma imagem em branco se não houver imagens carregadas no folder
+            # Exhibits a blank image in case of error
             blank_image = np.zeros(PREVIEW_THUMBNAIL_SIZE + (3,), dtype=np.uint8)
-            self.image_editor_frame.set_image(blank_image, None, None, None) # Passa None para todas as outras
+            self.image_editor_frame.set_image(blank_image, None)
 
     def _start_cropping(self):
-        # Usar a imagem completa e rotacionada para a seleção de corte
+     
         if self.current_image_full_res_uncropped is None:
             messagebox.showwarning("Aviso", "Nenhuma imagem carregada para corte.")
             return
@@ -253,15 +278,15 @@ class DropletAnalyzerApp(tk.Tk):
                            (int(x2 * self.scale_factor_crop_display), int(y2 * self.scale_factor_crop_display)),
                            (0, 255, 0), 2)
 
-        cv2.namedWindow("Selecione a Área de Corte (Arraste e Solte)", cv2.WINDOW_NORMAL)
-        cv2.setWindowProperty("Selecione a Área de Corte (Arraste e Solte)", cv2.WND_PROP_TOPMOST, 1)
+        cv2.namedWindow("Select cropping area (Click and drag)", cv2.WINDOW_NORMAL)
+        cv2.setWindowProperty("Select cropping area (Click and drag)", cv2.WND_PROP_TOPMOST, 1)
 
         # Set window size based on the scaled image
-        cv2.resizeWindow("Selecione a Área de Corte (Arraste e Solte)",
+        cv2.resizeWindow("Select cropping area (Click and drag)",
                          self.temp_crop_display_scaled.shape[1], self.temp_crop_display_scaled.shape[0])
 
-        cv2.imshow("Selecione a Área de Corte (Arraste e Solte)", self.temp_crop_display_scaled)
-        cv2.setMouseCallback("Selecione a Área de Corte (Arraste e Solte)", self._mouse_callback_crop)
+        cv2.imshow("Select cropping area (Click and drag)", self.temp_crop_display_scaled)
+        cv2.setMouseCallback("Select cropping area (Click and drag)", self._mouse_callback_crop)
 
         while True:
             key = cv2.waitKey(1) & 0xFF
@@ -276,7 +301,7 @@ class DropletAnalyzerApp(tk.Tk):
                     self.crop_coords = [0, 0, w, h]
                 self.crop_coords_var.set(','.join(map(str, self.crop_coords)))
                 break
-        cv2.destroyWindow("Selecione a Área de Corte (Arraste e Solte)")
+        cv2.destroyWindow("Select cropping area (Click and drag)")
         self.cropping_active = False
         # Update the main display with the (possibly new) cropped image
         self._load_and_display_current_image()
@@ -305,7 +330,7 @@ class DropletAnalyzerApp(tk.Tk):
             self.crop_coords = [self.start_x, self.start_y, x_orig, y_orig]
             # Draw initial point to show user where click occurred
             cv2.circle(display_img_for_cropping, (x, y), 5, (0, 0, 255), -1) # Red dot for start
-            cv2.imshow("Selecione a Área de Corte (Arraste e Solte)", display_img_for_cropping)
+            cv2.imshow("Select cropping area (Click and drag)", display_img_for_cropping)
 
         elif event == cv2.EVENT_MOUSEMOVE and flags == cv2.EVENT_FLAG_LBUTTON:
             # Update the end point of crop_coords in original image scale
@@ -324,7 +349,7 @@ class DropletAnalyzerApp(tk.Tk):
                           (scaled_x1, scaled_y1),
                           (scaled_x2, scaled_y2), # Use current scaled mouse coords for the rectangle end point
                           (0, 255, 0), 2)
-            cv2.imshow("Selecione a Área de Corte (Arraste e Solte)", display_img_for_cropping)
+            cv2.imshow("Select cropping area (Click and drag)", display_img_for_cropping)
 
         elif event == cv2.EVENT_LBUTTONUP:
             # Final end point in original image scale
@@ -348,16 +373,16 @@ class DropletAnalyzerApp(tk.Tk):
                           (scaled_x1, scaled_y1),
                           (scaled_x2, scaled_y2),
                           (0, 255, 0), 2)
-            cv2.imshow("Selecione a Área de Corte (Arraste e Solte)", display_img_for_cropping)
+            cv2.imshow("Select cropping area (Click and drag)", display_img_for_cropping)
 
 
     def _start_processing(self):
         if not self.image_paths:
-            messagebox.showwarning("Aviso", "Selecione uma pasta de imagens primeiro.")
+            messagebox.showwarning("Warning", "Select an image folder before.")
             return
         # A validação da imagem de base agora usa base_image_full_res_uncropped
         if self.base_image_full_res_uncropped is None:
-            messagebox.showwarning("Aviso", "Selecione e carregue uma imagem de base válida primeiro.")
+            messagebox.showwarning("Warning", "Select and load a valid base image.")
             return
 
 
@@ -367,15 +392,18 @@ class DropletAnalyzerApp(tk.Tk):
         os.makedirs(DEFAULT_OUTPUT_FOLDER, exist_ok=True)
 
         adj_params = self.image_editor_frame.get_adjustment_params()
+        
+        balance_path_str = self.balance_file.get()
 
-        messagebox.showinfo("Processamento", "Iniciando processamento. Isso pode levar alguns minutos. Uma mensagem de conclusão aparecerá.")
+        messagebox.showinfo("Processing", "Starting processing. This may take a few minutes. A completion message will appear.")
 
-        # Passamos as imagens FULL-RES ROTACIONADAS para o processamento em lote
+
         processing_thread = threading.Thread(target=self._run_processing, args=(
             self.image_paths,
             self.base_image_full_res_uncropped, # Passa a imagem de base full-res já rotacionada
             self.rotation_angle.get(), # Ângulo de rotação é para o processamento
             self.crop_coords,
+            balance_path_str,
             output_video_path,
             output_csv_path,
             adj_params['brightness'], adj_params['exposure'], adj_params['contrast'],
@@ -385,13 +413,14 @@ class DropletAnalyzerApp(tk.Tk):
 
     def _run_processing(self, *args):
         try:
-            # process_images_and_generate_video agora espera a imagem de base já rotacionada
-            # e os crop_coords serão aplicados dentro dela, junto com os ajustes.
-            from processing.image_processing import process_images_and_generate_video # Ensure this import is here
+
+            from processing.image_processing import process_images_and_generate_video 
             process_images_and_generate_video(*args)
-            messagebox.showinfo("Sucesso", "Processamento e geração de vídeo concluídos!")
+            
+            self.after(0, lambda: messagebox.showinfo("Success", "Processing and video generation concluded!"))
+            
         except Exception as e:
-            messagebox.showerror("Erro de Processamento", f"Ocorreu um erro durante o processamento: {e}")
+            print(f"Erro no processamento: {e}")
 
     def on_closing(self):
         cv2.destroyAllWindows()

@@ -2,8 +2,6 @@ import tkinter as tk
 from tkinter import ttk
 from PIL import Image, ImageTk
 import cv2
-
-# Certifique-se de que todas as importações necessárias estão aqui
 from processing.image_adjustments import apply_adjustments_cv2
 from processing.image_processing import segment_drop
 from config.settings import DEFAULT_BRIGHTNESS, DEFAULT_EXPOSURE, DEFAULT_CONTRAST, DEFAULT_HIGHLIGHTS, DEFAULT_SHADOWS, \
@@ -13,26 +11,21 @@ class ImageEditorFrame(ttk.Frame):
     def __init__(self, parent, crop_coords_ref, my_selector_var_param, *args, **kwargs):
         super().__init__(parent, *args, **kwargs)
         self.parent = parent
-        self.crop_coords_ref = crop_coords_ref # Referência para as coordenadas de corte da janela principal
+        self.crop_coords_ref = crop_coords_ref 
         self.my_selector_var = my_selector_var_param
 
         # Estas imagens já virão CORTADAS da main_window
         self.current_image_to_adjust_cv2 = None
         self.base_image_for_display_cv2 = None
 
-        # As imagens full-res para segment_drop não são mais necessárias aqui,
-        # pois `segment_drop` agora receberá imagens já cortadas e ajustadas.
-        # self.current_image_full_res_for_segment = None
-        # self.base_image_full_res_for_segment = None
-
         self.display_image_tk = None
         self.display_second_image_tk = None
 
-        self.brightness_var = tk.IntVar(value=DEFAULT_BRIGHTNESS)
-        self.exposure_var = tk.IntVar(value=DEFAULT_EXPOSURE)
-        self.contrast_var = tk.IntVar(value=DEFAULT_CONTRAST)
-        self.highlights_var = tk.IntVar(value=DEFAULT_HIGHLIGHTS)
-        self.shadows_var = tk.IntVar(value=DEFAULT_SHADOWS)
+        self.brightness_var = tk.IntVar(master=self, value=DEFAULT_BRIGHTNESS)
+        self.exposure_var = tk.IntVar(master=self, value=DEFAULT_EXPOSURE)
+        self.contrast_var = tk.IntVar(master=self, value=DEFAULT_CONTRAST)
+        self.highlights_var = tk.IntVar(master=self, value=DEFAULT_HIGHLIGHTS)
+        self.shadows_var = tk.IntVar(master=self, value=DEFAULT_SHADOWS)
 
         self._create_widgets()
         self._setup_layout()
@@ -44,49 +37,49 @@ class ImageEditorFrame(ttk.Frame):
         self.second_image_label = ttk.Label(self)
         self.second_image_label.grid(row=0, column=1, padx=2, pady=10, sticky="nsew")
 
-        self.brightness_slider = tk.Scale(self, from_=0, to=200, orient=tk.HORIZONTAL, label="Brilho (%)",
+        self.brightness_slider = tk.Scale(self, from_=0, to=200, orient=tk.HORIZONTAL, label="Brightness (%)",
                                             variable=self.brightness_var, command=self._on_slider_change)
-        self.exposure_slider = tk.Scale(self, from_=0, to=300, orient=tk.HORIZONTAL, label="Exposição (%)",
+        self.exposure_slider = tk.Scale(self, from_=0, to=300, orient=tk.HORIZONTAL, label="Exposure (%)",
                                          variable=self.exposure_var, command=self._on_slider_change)
-        self.contrast_slider = tk.Scale(self, from_=0, to=300, orient=tk.HORIZONTAL, label="Contraste (%)",
+        self.contrast_slider = tk.Scale(self, from_=0, to=300, orient=tk.HORIZONTAL, label="Contrast (%)",
                                          variable=self.contrast_var, command=self._on_slider_change)
-        self.highlights_slider = tk.Scale(self, from_=0, to=200, orient=tk.HORIZONTAL, label="Realces (%)",
-                                            variable=self.highlights_var, command=self._on_slider_change)
-        self.shadows_slider = tk.Scale(self, from_=0, to=200, orient=tk.HORIZONTAL, label="Sombras (%)",
+        # self.highlights_slider = tk.Scale(self, from_=0, to=200, orient=tk.HORIZONTAL, label="Highlights (%)",
+        #                                     variable=self.highlights_var, command=self._on_slider_change)
+        self.shadows_slider = tk.Scale(self, from_=0, to=200, orient=tk.HORIZONTAL, label="Shadows (%)",
                                          variable=self.shadows_var, command=self._on_slider_change)
 
         self.brightness_slider.grid(row=1, column=0, columnspan=2, sticky='ew', padx=10, pady=2)
         self.exposure_slider.grid(row=2, column=0, columnspan=2, sticky='ew', padx=10, pady=2)
         self.contrast_slider.grid(row=3, column=0, columnspan=2, sticky='ew', padx=10, pady=2)
-        self.highlights_slider.grid(row=4, column=0, columnspan=2, sticky='ew', padx=10, pady=2)
-        self.shadows_slider.grid(row=5, column=0, columnspan=2, sticky='ew', padx=10, pady=2)
+        # self.highlights_slider.grid(row=4, column=0, columnspan=2, sticky='ew', padx=10, pady=2)
+        self.shadows_slider.grid(row=4, column=0, columnspan=2, sticky='ew', padx=10, pady=2)
 
     def _setup_layout(self):
         self.grid_rowconfigure(0, weight=1) # Makes the image row expand
         self.grid_columnconfigure(0, weight=1)
         self.grid_columnconfigure(1, weight=1)
 
-    # Assinatura de set_image simplificada: recebe imagens JÁ CORTADAS
+
     def set_image(self, current_image_cropped, base_image_cropped):
         """
-        Define as imagens a serem exibidas no editor.
-        Ambas as imagens (current e base) devem vir JÁ CORTADAS da main_window.
+        Defines the images that are shown on the GUI
+
         """
         self.current_image_to_adjust_cv2 = current_image_cropped.copy() if current_image_cropped is not None else None
         self.base_image_for_display_cv2 = base_image_cropped.copy() if base_image_cropped is not None else None
 
-        # As variáveis full-res para segment_drop não são mais necessárias
-        # self.current_image_full_res_for_segment = None
-        # self.base_image_full_res_for_segment = None
-
-        self._update_display() # Força a atualização da exibição
+        self._update_display() # Forces the display update
 
     def _on_slider_change(self, val):
         self._update_display()
 
     def _update_display(self):
+        
+        #if not hasattr(self, 'image_label'):
+            #return
+    
         if self.current_image_to_adjust_cv2 is None:
-            # Limpar ambas as labels se não houver imagem atual
+
             self.image_label.config(image='')
             self.image_label.image = None
             self.second_image_label.config(image='')
@@ -99,7 +92,6 @@ class ImageEditorFrame(ttk.Frame):
         highlights = self.highlights_var.get() / 100.0
         shadows = self.shadows_var.get() / 100.0
 
-        # Aplica ajustes à imagem atual JÁ CORTADA para o lado esquerdo
         adjusted_img = apply_adjustments_cv2(
             self.current_image_to_adjust_cv2, brightness, exposure, contrast, highlights, shadows
         )
@@ -109,14 +101,14 @@ class ImageEditorFrame(ttk.Frame):
 
         img_pil.thumbnail(PREVIEW_THUMBNAIL_SIZE, Image.LANCZOS)
 
-        self.display_image_tk = ImageTk.PhotoImage(img_pil)
+        self.display_image_tk = ImageTk.PhotoImage(img_pil, master=self)
         self.image_label.config(image=self.display_image_tk)
         self.image_label.image = self.display_image_tk
 
         # --- Logic for the SECOND (PROCESSED) image (right side) ---
-        # Garantir que ambas as imagens (atual e base) estejam disponíveis e cortadas
+
         if self.current_image_to_adjust_cv2 is not None and self.base_image_for_display_cv2 is not None and self.my_selector_var.get():
-            # Aplica ajustes à imagem atual e de base (ambas já cortadas) antes de enviar para segment_drop
+
             adjusted_current_for_segment = apply_adjustments_cv2(
                 self.current_image_to_adjust_cv2, brightness, exposure, contrast, highlights, shadows
             )
@@ -124,8 +116,6 @@ class ImageEditorFrame(ttk.Frame):
                 self.base_image_for_display_cv2, brightness, exposure, contrast, highlights, shadows
             )
 
-            # Chama segment_drop com as imagens JÁ CORTADAS.
-            # O crop_coords é passado, mas segment_drop não o usará para cortar, apenas para referência.
             mask_full, prominence_contour, processed_image_display = segment_drop(
                 adjusted_current_for_segment, # Imagem atual JÁ CORTADA e ajustada
                 adjusted_base_for_segment,    # Imagem de base JÁ CORTADA e ajustada
@@ -145,7 +135,7 @@ class ImageEditorFrame(ttk.Frame):
                 second_img_pil = Image.fromarray(second_img_rgb)
                 second_img_pil.thumbnail(PREVIEW_THUMBNAIL_SIZE, Image.LANCZOS)
 
-                self.display_second_image_tk = ImageTk.PhotoImage(second_img_pil)
+                self.display_second_image_tk = ImageTk.PhotoImage(second_img_pil, master=self)
                 self.second_image_label.config(image=self.display_second_image_tk)
                 self.second_image_label.image = self.display_second_image_tk
             else:
