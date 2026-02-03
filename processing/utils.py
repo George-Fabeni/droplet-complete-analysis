@@ -88,11 +88,9 @@ def convert_image_name(image_name):
     format_date = date_str_orig.replace('-', '/') # "17/07/2025"
     format_time = time_str_orig.replace('_', ':') # "10:02:29"
     full_string_datetime = format_date + ' ' + format_time
-    print("after replace: ", full_string_datetime)
 
     # Format must be the same as used in the csv measurements file '%d/%m/%Y %H:%M:%S'
     date_time_image = pd.to_datetime(full_string_datetime, format='%d/%m/%Y %H:%M:%S')
-    print("datetime image: ", date_time_image)
     return(date_time_image)
 
 
@@ -122,8 +120,6 @@ def spreadsheet_reading(base_file_path):
         col2_limpa = pd.to_numeric(df[col2].astype(str).str.strip(), errors='coerce')
         col3_limpa = pd.to_numeric(df[col3].astype(str).str.strip(), errors='coerce')
 
-        # Cria um DataFrame temporário para remover NaNs de forma sincronizada
-        # Isso garante que se uma linha tiver NaN em qualquer uma das 3 colunas, ela será removida.
         df_plot = pd.DataFrame({
             'col0': col0_limpa,
             'col1': col1_limpa,
@@ -179,11 +175,11 @@ def plot_graph(df_plot):
         ax2.set_ylabel("Volume (uL)", color=color_y2, fontsize = 18)
         ax2.tick_params(axis='y', labelcolor=color_y2)
         ax2.plot(df_plot['full_time_data'], df_plot['corresponding_volume'], color=color_y2, linestyle='--', linewidth=2, label='Axis 2')
-        ax2.set_ylim(ymin2, ymax2)# Definir limite Y para o eixo principal        
+        ax2.set_ylim(ymin2, ymax2)      
     
         ax1.grid(True, linestyle='--', alpha=0.7) # Adicionar grade
 
         # Plot graph
         plt.title(plt_title, fontsize=20)  
-        plt.tight_layout() # Ajusta o layout para evitar sobreposição
+        plt.tight_layout() 
         plt.show()  

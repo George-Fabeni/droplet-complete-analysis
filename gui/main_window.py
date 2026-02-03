@@ -128,7 +128,6 @@ class DropletAnalyzerApp(tk.Tk):
 
     def _select_base_image(self):
         filepath = load_image_from_dialog()
-        print("DEBUG Base image selected: ", filepath)
         if filepath:
             self.base_image_path_var.set(filepath)
             # Ao selecionar nova imagem de base, recarregar apenas ela e redesenhar tudo
@@ -162,7 +161,7 @@ class DropletAnalyzerApp(tk.Tk):
             try:
                 full_res_base = load_image_cv2(base_img_path_str)
                 self.base_image_full_res_uncropped = rotate_image(full_res_base, self.rotation_angle.get())
-                print("DEBUG: Base image reloaded (full-res, uncropped) for rotation angle change.")
+
             except Exception as base_load_error:
                 messagebox.showwarning(
                     "Aviso de Imagem de Base",
@@ -175,8 +174,7 @@ class DropletAnalyzerApp(tk.Tk):
     # Dentro da classe DropletAnalyzerApp
 
     def _on_selector_toggle(self):
-        # Este método é chamado sempre que o Checkbutton é clicado.
-        print("DEBUG: condição do seletor: ", self.my_selector_var.get())
+     
         self._load_and_display_current_image()
 
 
@@ -190,7 +188,6 @@ class DropletAnalyzerApp(tk.Tk):
             current_path = self.image_paths[self.current_image_index]
 
             # Inicializa variáveis
-            img_cv2 = None
             current_image_full_res_rotated = None
 
             try:
